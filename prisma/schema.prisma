@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql",
+  url      = env("DATABASE_URL"),
+  directUrl = env("DIRECT_URL")
+
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String
+  phone        String   @unique
+  passwordHash String
+  role         String // "admin" or "delivery"
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  orders       Order[]  @relation("AssignedOrders")
+}
+
+model Order {
+  id             Int    @id @default(autoincrement())
+  shopifyOrderId String @unique
+  orderNumber    String
+
+  // "shopify" for synced orders, "manual" for ones the admin typed in
+  source String @default("shopify")
+
+  customerName String
+  phone        String?
+  address      String?
+  pincode      String?
+  city         String?
+
+  utmCampaign String?
+  products    Json
+  totalPrice  String?
+  orderDate   DateTime
+
+  // Assignment - assignedBy records who handed it over (admin or another rider)
+  assignedToId   Int?
+  assignedTo     User?     @relation("AssignedOrders", fields: [assignedToId], references: [id])
+  assignedAt     DateTime?
+  assignedById   Int?
+  assignedByName String?
+  assignedByRole String? // "admin" | "delivery"
+
+  // pending | out_for_delivery | rescheduled | delivered | cancelled
+  status String @default("pending")
+
+  deliveredAt DateTime?
+  paymentMode String? // "cash" | "online"
+
+  pendingNote   String?
+  pendingUntil  DateTime?
+  attemptCount  Int       @default(0)
+  lastAttemptAt DateTime?
+
+  cancelReason String?
+  cancelNote   String?
+  cancelledAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([orderDate])
+  @@index([pincode])
+  @@index([source])
+}

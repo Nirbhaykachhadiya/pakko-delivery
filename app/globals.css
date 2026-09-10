@@ -1,26 +1,73 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ==========================================================================
+   PAKKO AMDAVADI - BRAND COLOURS
+   --------------------------------------------------------------------------
+   Four colours only:
+     #235A95  deep blue   - chrome, primary actions, delivered
+     #B8EAFB  light blue  - highlights, pending, selected states
+     #000000  black       - text, cancelled
+     #FFFFFF  white       - surfaces
+
+   Every value below is one of those four, or a tint of them mixed against
+   white. Nothing new is introduced. Change the two lines marked EDIT ME and
+   the whole app follows.
+   ========================================================================== */
+
+@theme {
+  /* ---- Blue scale, built from #235A95 and #B8EAFB ---- */
+  --color-brand-50:  #f2f9fe;
+  --color-brand-100: #ddf2fd;
+  --color-brand-200: #b8eafb;  /* EDIT ME - light brand blue */
+  --color-brand-300: #8ad4f0;
+  --color-brand-400: #56aad3;
+  --color-brand-500: #2f7cb4;
+  --color-brand-600: #235a95;  /* EDIT ME - main brand blue */
+  --color-brand-700: #1c4876;
+  --color-brand-800: #163659;
+  --color-brand-900: #10253c;
+  --color-brand-950: #081726;
+
+  /* ---- Neutrals: black at reducing strength over white ---- */
+  --color-ink-50:  #f6f8fa;
+  --color-ink-100: #ebeff3;
+  --color-ink-200: #d9e0e8;
+  --color-ink-300: #b4c0cd;
+  --color-ink-400: #7d8b9b;
+  --color-ink-500: #56626f;
+  --color-ink-600: #3b444e;
+  --color-ink-700: #262c33;
+  --color-ink-800: #14181c;
+  --color-ink-900: #000000;
+  --color-ink-950: #000000;
+
+  /* ---- Status: separated by fill weight, not hue ----
+     delivered = solid deep blue
+     pending   = light blue fill with dark text
+     cancelled = solid black                            */
+  --color-good-50:  #f2f9fe;
+  --color-good-500: #235a95;
+  --color-good-600: #1c4876;
+
+  --color-warn-50:  #f2f9fe;
+  --color-warn-200: #b8eafb;
+  --color-warn-500: #b8eafb;
+  --color-warn-600: #8ad4f0;
+
+  --color-stop-50:  #f3f4f5;
+  --color-stop-500: #000000;
+  --color-stop-600: #14181c;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+html { -webkit-tap-highlight-color: transparent; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #ffffff;
+  color: #000000;
+  overscroll-behavior-y: none;
 }
+
+.no-bar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-bar::-webkit-scrollbar { display: none; }
+
+.date-dark { color-scheme: dark; }
