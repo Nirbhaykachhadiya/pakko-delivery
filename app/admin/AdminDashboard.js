@@ -3,18 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { STATUSES, fmtDateTime, fmtDate, telHref, prettyPhone } from '@/lib/constants';
-import { areaFor, normalisePin } from '@/lib/pincodes';
+import { areaFor } from '@/lib/pincodes';
+import PincodeBadge from '@/components/PincodeBadge';
+import DateRange from '@/components/DateRange';
 
-const todayISO = () => {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-};
+// Admin lands on the only thing that needs action: orders nobody is carrying.
+const DEFAULT_FILTERS = { status: '', rider: 'unassigned', q: '', from: '', to: '' };
 
 export default function AdminDashboard({ user }) {
   const router = useRouter();
 
-  const [view, setView] = useState('orders'); // orders | team
+  const [view, setView] = useState('orders');
   const [orders, setOrders] = useState([]);
   const [riders, setRiders] = useState([]);
   const [team, setTeam] = useState([]);
@@ -26,8 +25,9 @@ export default function AdminDashboard({ user }) {
   const [modal, setModal] = useState(null);
   const [busyIds, setBusyIds] = useState(new Set());
   const [flashIds, setFlashIds] = useState(new Set());
+  const [showFilters, setShowFilters] = useState(false);
 
-  const [filters, setFilters] = useState({ status: '', rider: '', q: '', from: '', to: '' });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -40,6 +40,7 @@ export default function AdminDashboard({ user }) {
     const sq = new URLSearchParams();
     if (filters.from) sq.set('from', filters.from);
     if (filters.to) sq.set('to', filters.to);
+    if (filters.rider) sq.set('rider', filters.rider);
 
     const [o, s, u] = await Promise.all([
       fetch(`/api/orders?${query}`).then((x) => x.json()),
@@ -53,7 +54,7 @@ export default function AdminDashboard({ user }) {
     setTeam(u.all || []);
     setPicked(new Set());
     setLoading(false);
-  }, [query, filters.from, filters.to]);
+  }, [query, filters.from, filters.to, filters.rider]);
 
   useEffect(() => {
     load();
@@ -85,7 +86,6 @@ export default function AdminDashboard({ user }) {
     setBusyIds(new Set());
     if (!res.ok) return setToast(d.error || 'Could not assign');
 
-    // brief highlight so the change is visible, not just silent
     setFlashIds(new Set(orderIds));
     setTimeout(() => setFlashIds(new Set()), 950);
 
@@ -106,11 +106,22 @@ export default function AdminDashboard({ user }) {
     setPicked(next);
   };
 
+  const activeCount = Object.entries(filters).filter(
+    ([k, v]) => v && v !== DEFAULT_FILTERS[k]
+  ).length;
+
+  const scopeLabel =
+    filters.rider === 'unassigned'
+      ? 'Not assigned'
+      : filters.rider
+        ? riders.find((r) => r.id === Number(filters.rider))?.name || 'Rider'
+        : 'Everyone';
+
   return (
-    <main className="min-h-dvh bg-ink-50 pb-24 md:pb-8">
+    <main className="min-h-dvh bg-white pb-10">
       <header className="sticky top-0 z-30 bg-brand-600 text-white">
-        <div className="mx-auto flex max-w-[1700px] items-center gap-3 px-4 py-3">
-          <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-500 text-sm font-bold">
+        <div className="mx-auto flex max-w-[1700px] items-center gap-2 px-3 py-3 md:px-5">
+          <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-200 text-sm font-bold text-brand-900">
             PA
           </div>
           <div className="min-w-0">
@@ -118,36 +129,31 @@ export default function AdminDashboard({ user }) {
             <div className="text-xs text-brand-100">Delivery control</div>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-1.5">
             <button
               onClick={() => setModal({ type: 'newOrder' })}
-              className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold active:bg-brand-700"
+              className="btn btn-light px-3 py-2 text-sm"
             >
               + Order
             </button>
-            <button
-              onClick={sync}
-              disabled={syncing}
-              className="rounded-lg bg-brand-700 px-3 py-2 text-sm font-medium disabled:opacity-50"
-            >
-              {syncing ? <><span className="pk-spinner" />Syncing</> : 'Sync'}
+            <button onClick={sync} disabled={syncing} className="btn btn-plain bg-brand-700 px-3 py-2 text-sm">
+              {syncing && <span className="pk-spinner" />}
+              {syncing ? 'Syncing' : 'Sync'}
             </button>
             <button
               onClick={() => setModal({ type: 'account' })}
-              className="rounded-lg px-2 py-2 text-sm text-brand-100 hover:text-white"
+              className="btn btn-plain px-2.5 py-2 text-sm text-brand-100"
             >
               Account
             </button>
-            <button
-              onClick={logout}
-              className="hidden text-sm text-brand-100 hover:text-white sm:block"
-            >
+            {/* Always visible, on every screen size */}
+            <button onClick={logout} className="btn btn-plain px-2.5 py-2 text-sm text-brand-100">
               Sign out
             </button>
           </div>
         </div>
 
-        <div className="mx-auto flex max-w-[1700px] gap-1 px-4">
+        <div className="mx-auto flex max-w-[1700px] gap-1 px-3 md:px-5">
           {[
             { k: 'orders', l: 'Orders' },
             { k: 'team', l: 'Delivery boys' },
@@ -156,7 +162,7 @@ export default function AdminDashboard({ user }) {
               key={t.k}
               onClick={() => setView(t.k)}
               className={`border-b-[3px] px-3 py-2.5 text-sm font-medium ${
-                view === t.k ? 'border-brand-600 text-white' : 'border-transparent text-brand-200'
+                view === t.k ? 'border-brand-200 text-white' : 'border-transparent text-brand-200'
               }`}
             >
               {t.l}
@@ -176,25 +182,121 @@ export default function AdminDashboard({ user }) {
           />
         ) : (
           <>
+            {/* ---- Filter bar ---- */}
+            <section className="rounded-2xl border border-ink-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center gap-2 p-3">
+                <input
+                  value={filters.q}
+                  onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+                  placeholder="Search name, phone, pincode, order no."
+                  className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-brand-600"
+                />
+                <button
+                  onClick={() => setShowFilters((s) => !s)}
+                  className={`btn px-3.5 py-2.5 text-sm ${
+                    showFilters || activeCount ? 'btn-blue' : 'btn-ghost'
+                  }`}
+                >
+                  Filters{activeCount ? ` · ${activeCount}` : ''}
+                </button>
+                {activeCount > 0 && (
+                  <button
+                    onClick={() => setFilters(DEFAULT_FILTERS)}
+                    className="btn btn-ghost px-3 py-2.5 text-sm"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              {/* Quick scope chips - always visible, the thing used most */}
+              <div className="no-bar flex gap-2 overflow-x-auto border-t border-ink-100 px-3 py-2.5">
+                <ScopeChip
+                  on={filters.rider === 'unassigned'}
+                  onClick={() => setFilters({ ...filters, rider: 'unassigned' })}
+                  count={stats?.unassigned}
+                >
+                  Not assigned
+                </ScopeChip>
+                <ScopeChip
+                  on={filters.rider === ''}
+                  onClick={() => setFilters({ ...filters, rider: '' })}
+                >
+                  Everyone
+                </ScopeChip>
+                {riders.map((r) => (
+                  <ScopeChip
+                    key={r.id}
+                    on={filters.rider === String(r.id)}
+                    onClick={() => setFilters({ ...filters, rider: String(r.id) })}
+                  >
+                    {r.name}
+                  </ScopeChip>
+                ))}
+              </div>
+
+              {showFilters && (
+                <div className="space-y-3 border-t border-ink-100 p-3">
+                  <div>
+                    <span className="text-xs font-semibold text-ink-600">Date</span>
+                    <div className="mt-1.5">
+                      <DateRange
+                        value={{ from: filters.from, to: filters.to }}
+                        onChange={(r) => setFilters({ ...filters, ...r })}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-xs font-semibold text-ink-600">Status</span>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      <ScopeChip
+                        on={filters.status === ''}
+                        onClick={() => setFilters({ ...filters, status: '' })}
+                      >
+                        Any
+                      </ScopeChip>
+                      {Object.entries(STATUSES).map(([k, v]) => (
+                        <ScopeChip
+                          key={k}
+                          on={filters.status === k}
+                          onClick={() => setFilters({ ...filters, status: k })}
+                        >
+                          {v.label}
+                        </ScopeChip>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* ---- Stats, following the same filters ---- */}
             {stats && (
-              <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-                <Stat label="Total" value={stats.total} />
-                <Stat label="Not assigned" value={stats.unassigned} tone="brand" />
-                <Stat label="To deliver" value={stats.counts.out_for_delivery} />
-                <Stat label="Pending" value={stats.counts.rescheduled} tone="warn" />
-                <Stat label="Delivered" value={stats.counts.delivered} tone="good" />
-                <Stat label="Cancelled" value={stats.counts.cancelled} tone="stop" />
-              </section>
+              <>
+                <p className="text-sm text-ink-500">
+                  Showing <b className="text-black">{scopeLabel}</b>
+                  {filters.from || filters.to ? ' for the chosen dates' : ' · all dates'}
+                </p>
+                <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                  <Stat label="Total" value={stats.total} />
+                  <Stat label="Not assigned" value={stats.unassigned} tone="brand" />
+                  <Stat label="Assigned" value={stats.counts.out_for_delivery} tone="brand" />
+                  <Stat label="Pending" value={stats.counts.rescheduled} tone="warn" />
+                  <Stat label="Delivered" value={stats.counts.delivered} tone="good" />
+                  <Stat label="Cancelled" value={stats.counts.cancelled} tone="stop" />
+                </section>
+              </>
             )}
 
             {stats?.riderStats?.length > 0 && (
-              <section className="overflow-x-auto rounded-2xl bg-white ring-1 ring-ink-200">
+              <section className="overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-sm">
                 <table className="w-full min-w-[560px] text-sm">
                   <thead className="border-b border-ink-100 bg-ink-50 text-left text-ink-500">
                     <tr>
                       <th className="px-4 py-2.5 font-medium">Delivery boy</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Total</th>
                       <th className="px-3 py-2.5 text-right font-medium">Assigned</th>
-                      <th className="px-3 py-2.5 text-right font-medium">To deliver</th>
                       <th className="px-3 py-2.5 text-right font-medium">Pending</th>
                       <th className="px-3 py-2.5 text-right font-medium">Delivered</th>
                       <th className="px-3 py-2.5 text-right font-medium">Cancelled</th>
@@ -202,17 +304,23 @@ export default function AdminDashboard({ user }) {
                   </thead>
                   <tbody className="divide-y divide-ink-100">
                     {stats.riderStats.map((r) => (
-                      <tr key={r.id}>
-                        <td className="px-4 py-2.5 font-semibold text-ink-900">{r.name}</td>
+                      <tr
+                        key={r.id}
+                        onClick={() => setFilters({ ...filters, rider: String(r.id) })}
+                        className="cursor-pointer hover:bg-brand-50"
+                      >
+                        <td className="px-4 py-2.5 font-semibold text-black">{r.name}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{r.assigned}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{r.toDeliver}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums text-brand-700">
+                          {r.toDeliver}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-warn-600">
                           {r.rescheduled}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums text-good-600">
                           {r.delivered}
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-ink-900">
+                        <td className="px-3 py-2.5 text-right tabular-nums text-stop-600">
                           {r.cancelled}
                         </td>
                       </tr>
@@ -222,15 +330,8 @@ export default function AdminDashboard({ user }) {
               </section>
             )}
 
-            <Filters
-              filters={filters}
-              setFilters={setFilters}
-              riders={riders}
-              onToday={() => setFilters({ ...filters, from: todayISO(), to: todayISO() })}
-            />
-
             {picked.size > 0 && (
-              <div className="sticky top-[104px] z-20 flex flex-wrap items-center gap-2 rounded-xl bg-brand-800 px-3 py-2.5 text-white">
+              <div className="sticky top-[112px] z-20 flex flex-wrap items-center gap-2 rounded-xl bg-brand-800 px-3 py-2.5 text-white shadow-lg">
                 <span className="text-sm font-medium tabular-nums">{picked.size} selected</span>
                 <select
                   defaultValue=""
@@ -240,7 +341,7 @@ export default function AdminDashboard({ user }) {
                     assign([...picked], v === 'unassign' ? null : Number(v));
                     e.target.value = '';
                   }}
-                  className="rounded-lg bg-white px-2.5 py-1.5 text-sm text-ink-900"
+                  className="rounded-lg bg-white px-2.5 py-1.5 text-sm text-black"
                 >
                   <option value="">Assign to…</option>
                   {riders.map((r) => (
@@ -252,7 +353,7 @@ export default function AdminDashboard({ user }) {
                 </select>
                 <button
                   onClick={() => setPicked(new Set())}
-                  className="ml-auto text-sm text-ink-300"
+                  className="btn btn-plain ml-auto px-2 py-1 text-sm text-brand-100"
                 >
                   Clear
                 </button>
@@ -262,12 +363,18 @@ export default function AdminDashboard({ user }) {
             {loading && <p className="py-16 text-center text-ink-400">Loading orders…</p>}
 
             {!loading && orders.length === 0 && (
-              <p className="py-16 text-center text-ink-500">
-                No orders match these filters.
-              </p>
+              <div className="py-16 text-center">
+                <p className="text-ink-500">Nothing here with these filters.</p>
+                <button
+                  onClick={() => setFilters(DEFAULT_FILTERS)}
+                  className="btn btn-ghost mt-3 px-4 py-2 text-sm"
+                >
+                  Reset filters
+                </button>
+              </div>
             )}
 
-            {/* Mobile: cards */}
+            {/* Mobile cards */}
             <div className="space-y-3 md:hidden">
               {!loading &&
                 orders.map((o) => (
@@ -284,9 +391,9 @@ export default function AdminDashboard({ user }) {
                 ))}
             </div>
 
-            {/* Desktop: table */}
+            {/* Desktop table */}
             {!loading && orders.length > 0 && (
-              <section className="hidden overflow-x-auto rounded-2xl bg-white ring-1 ring-ink-200 md:block">
+              <section className="hidden overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-sm md:block">
                 <table className="w-full min-w-[1200px] text-sm">
                   <thead className="border-b border-ink-100 bg-ink-50 text-left text-ink-500">
                     <tr>
@@ -303,8 +410,8 @@ export default function AdminDashboard({ user }) {
                         />
                       </th>
                       <th className="px-3 py-2.5 font-medium">Order</th>
-                      <th className="px-3 py-2.5 font-medium">Customer</th>
                       <th className="px-3 py-2.5 font-medium">Area</th>
+                      <th className="px-3 py-2.5 font-medium">Customer</th>
                       <th className="px-3 py-2.5 font-medium">Items</th>
                       <th className="px-3 py-2.5 text-right font-medium">Total</th>
                       <th className="px-3 py-2.5 font-medium">Status</th>
@@ -314,7 +421,6 @@ export default function AdminDashboard({ user }) {
                   <tbody className="divide-y divide-ink-100">
                     {orders.map((o) => {
                       const un = !o.assignedToId;
-                      const area = areaFor(o.pincode);
                       return (
                         <tr
                           key={o.id}
@@ -332,11 +438,11 @@ export default function AdminDashboard({ user }) {
                           </td>
                           <td className="px-3 py-3 align-top">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-base font-bold text-ink-900">
+                              <span className="font-mono text-base font-bold text-black">
                                 {o.orderNumber}
                               </span>
                               {o.source === 'manual' && (
-                                <span className="rounded bg-brand-100 px-1 text-[10px] font-bold text-brand-800">
+                                <span className="rounded bg-brand-200 px-1 text-[10px] font-bold text-brand-900">
                                   MANUAL
                                 </span>
                               )}
@@ -344,7 +450,10 @@ export default function AdminDashboard({ user }) {
                             <div className="text-xs text-ink-400">{fmtDateTime(o.orderDate)}</div>
                           </td>
                           <td className="px-3 py-3 align-top">
-                            <div className="font-semibold text-ink-900">{o.customerName}</div>
+                            <PincodeBadge pincode={o.pincode} size="sm" />
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="font-semibold text-black">{o.customerName}</div>
                             {o.phone && (
                               <a
                                 href={telHref(o.phone)}
@@ -355,27 +464,11 @@ export default function AdminDashboard({ user }) {
                             )}
                             <div className="max-w-[220px] text-xs text-ink-500">{o.address}</div>
                           </td>
-                          <td className="px-3 py-3 align-top">
-                            <div
-                              className={`inline-flex flex-col rounded-lg px-2 py-1 ring-1 ${
-                                area
-                                  ? 'bg-brand-50 ring-brand-200'
-                                  : 'bg-ink-100 ring-ink-300'
-                              }`}
-                            >
-                              <span className="font-mono text-sm font-bold tabular-nums text-brand-900">
-                                {normalisePin(o.pincode) || '—'}
-                              </span>
-                              <span className="text-xs font-medium text-brand-800">
-                                {area || 'Add area name'}
-                              </span>
-                            </div>
-                          </td>
                           <td className="max-w-[240px] px-3 py-3 align-top">
                             {(o.products || []).map((p, i) => (
                               <div key={i} className="flex items-center gap-1.5">
-                                <span className="font-medium text-ink-900">{p.name}</span>
-                                <span className="rounded bg-ink-900 px-1.5 text-xs font-bold text-white">
+                                <span className="font-medium text-black">{p.name}</span>
+                                <span className="rounded bg-black px-1.5 text-xs font-bold text-white">
                                   ×{p.qty}
                                 </span>
                                 <span className="tabular-nums text-ink-600">₹{p.price}</span>
@@ -396,7 +489,7 @@ export default function AdminDashboard({ user }) {
                               onChange={(e) =>
                                 assign([o.id], e.target.value ? Number(e.target.value) : null)
                               }
-                              className={`w-full rounded-lg border px-2 py-1.5 text-sm ${
+                              className={`w-full rounded-lg border px-2 py-1.5 text-sm disabled:opacity-50 ${
                                 un ? 'border-brand-400 bg-white' : 'border-ink-300 bg-white'
                               }`}
                             >
@@ -437,7 +530,6 @@ export default function AdminDashboard({ user }) {
           />
         </Modal>
       )}
-
       {modal?.type === 'account' && (
         <Modal title="My account" onClose={() => setModal(null)}>
           <AccountForm
@@ -448,7 +540,6 @@ export default function AdminDashboard({ user }) {
           />
         </Modal>
       )}
-
       {modal?.type === 'newRider' && (
         <Modal title="Add delivery boy" onClose={() => setModal(null)}>
           <RiderForm
@@ -460,7 +551,6 @@ export default function AdminDashboard({ user }) {
           />
         </Modal>
       )}
-
       {modal?.type === 'editRider' && (
         <Modal title={`Edit ${modal.rider.name}`} onClose={() => setModal(null)}>
           <RiderForm
@@ -483,19 +573,37 @@ export default function AdminDashboard({ user }) {
   );
 }
 
-/* ---------------------------------------------------------------- pieces */
+/* ------------------------------------------------------------------ pieces */
+
+function ScopeChip({ on, onClick, count, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`btn shrink-0 px-3.5 py-2 text-sm ${
+        on ? 'btn-blue' : 'bg-brand-50 text-brand-800 ring-1 ring-brand-200'
+      }`}
+    >
+      {children}
+      {typeof count === 'number' && (
+        <span className={`tabular-nums ${on ? 'text-brand-100' : 'text-brand-600'}`}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
 
 function Stat({ label, value, tone }) {
   const tones = {
     brand: 'text-brand-600',
     good: 'text-good-600',
     stop: 'text-stop-600',
-    warn: 'text-brand-700',
+    warn: 'text-warn-600',
   };
   return (
-    <div className="rounded-xl bg-white px-3 py-2.5 ring-1 ring-ink-200">
+    <div className="rounded-xl border border-ink-200 bg-white px-3 py-2.5 shadow-sm">
       <div className="text-xs text-ink-500">{label}</div>
-      <div className={`text-2xl font-bold tabular-nums ${tones[tone] || 'text-ink-900'}`}>
+      <div className={`text-2xl font-bold tabular-nums ${tones[tone] || 'text-black'}`}>
         {value}
       </div>
     </div>
@@ -514,7 +622,7 @@ function StatusChip({ status }) {
 function StatusDetail({ order: o }) {
   if (o.status === 'rescheduled')
     return (
-      <div className="mt-1 max-w-[200px] text-xs text-brand-700">
+      <div className="mt-1 max-w-[200px] text-xs text-warn-900">
         {o.pendingUntil && <b>→ {fmtDate(o.pendingUntil)} </b>}
         {o.pendingNote}
       </div>
@@ -531,86 +639,25 @@ function StatusDetail({ order: o }) {
       <div className="mt-1 text-xs text-ink-500">
         {fmtDateTime(o.deliveredAt)}
         {o.paymentMode && (
-          <b className="ml-1 text-ink-700">{o.paymentMode === 'cash' ? 'Cash' : 'Online'}</b>
+          <b className="ml-1 text-good-600">{o.paymentMode === 'cash' ? 'Cash' : 'Online'}</b>
         )}
       </div>
     );
   return null;
 }
 
-function Filters({ filters, setFilters, riders, onToday }) {
-  return (
-    <section className="grid gap-2.5 rounded-2xl bg-white p-3 ring-1 ring-ink-200 sm:grid-cols-2 lg:grid-cols-6">
-      <input
-        value={filters.q}
-        onChange={(e) => setFilters({ ...filters, q: e.target.value })}
-        placeholder="Search name, phone, pincode…"
-        className="rounded-lg border border-ink-300 px-3 py-2.5 text-sm outline-none focus:border-ink-900 lg:col-span-2"
-      />
-      <select
-        value={filters.status}
-        onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-        className="rounded-lg border border-ink-300 px-3 py-2.5 text-sm"
-      >
-        <option value="">All statuses</option>
-        {Object.entries(STATUSES).map(([k, v]) => (
-          <option key={k} value={k}>
-            {v.label}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.rider}
-        onChange={(e) => setFilters({ ...filters, rider: e.target.value })}
-        className="rounded-lg border border-ink-300 px-3 py-2.5 text-sm"
-      >
-        <option value="">Everyone</option>
-        <option value="unassigned">Not assigned</option>
-        {riders.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.name}
-          </option>
-        ))}
-      </select>
-      <input
-        type="date"
-        value={filters.from}
-        onChange={(e) => setFilters({ ...filters, from: e.target.value })}
-        className="rounded-lg border border-ink-300 px-3 py-2.5 text-sm"
-      />
-      <div className="flex gap-2">
-        <button
-          onClick={onToday}
-          className="flex-1 rounded-lg border border-ink-300 px-3 py-2.5 text-sm font-medium"
-        >
-          Today
-        </button>
-        <button
-          onClick={() => setFilters({ status: '', rider: '', q: '', from: '', to: '' })}
-          className="rounded-lg px-3 py-2.5 text-sm text-ink-500"
-        >
-          Clear
-        </button>
-      </div>
-    </section>
-  );
-}
-
 function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAssign }) {
   const un = !o.assignedToId;
-  const area = areaFor(o.pincode);
 
   return (
     <article
-      className={`overflow-hidden rounded-2xl bg-white ring-1 ${
+      className={`overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ${
         un ? 'ring-brand-300' : 'ring-ink-200'
       } ${flash ? 'pk-flash' : ''}`}
     >
-      <div
-        className={`flex items-center gap-2 px-3 py-2.5 ${un ? 'bg-brand-50' : 'bg-ink-50'}`}
-      >
+      <div className={`flex items-center gap-2 px-3 py-2.5 ${un ? 'bg-brand-50' : 'bg-ink-50'}`}>
         <input type="checkbox" checked={picked} onChange={onToggle} className="size-4" />
-        <span className="font-mono font-bold text-ink-900">{o.orderNumber}</span>
+        <span className="font-mono font-bold text-black">{o.orderNumber}</span>
         {o.source === 'manual' && (
           <span className="rounded bg-brand-200 px-1.5 text-[10px] font-bold text-brand-900">
             MANUAL
@@ -619,24 +666,21 @@ function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAss
         <span className="ml-auto font-bold tabular-nums">₹{o.totalPrice}</span>
       </div>
 
-      <div className="space-y-2 p-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="font-semibold text-ink-900">{o.customerName}</div>
+      <div className="space-y-2.5 p-3">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-black">{o.customerName}</div>
             {o.phone && (
               <a href={telHref(o.phone)} className="font-mono text-sm text-ink-500 tabular-nums">
                 {prettyPhone(o.phone)}
               </a>
             )}
           </div>
-          <StatusChip status={o.status} />
+          <PincodeBadge pincode={o.pincode} />
         </div>
 
-        <div className="inline-flex items-center gap-1.5 rounded-lg bg-brand-50 px-2 py-1 ring-1 ring-brand-200">
-          <span className="font-mono text-sm font-bold tabular-nums text-brand-900">
-            {normalisePin(o.pincode) || '—'}
-          </span>
-          <span className="text-sm font-semibold text-brand-900">{area || 'Add area name'}</span>
+        <div className="flex items-center gap-2">
+          <StatusChip status={o.status} />
         </div>
 
         <p className="text-sm text-ink-600">{o.address}</p>
@@ -645,7 +689,7 @@ function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAss
           {(o.products || []).map((p, i) => (
             <li key={i} className="flex items-center gap-2 py-0.5 text-sm">
               <span className="min-w-0 flex-1 font-medium">{p.name}</span>
-              <span className="rounded bg-ink-900 px-1.5 text-xs font-bold text-white">
+              <span className="rounded bg-black px-1.5 text-xs font-bold text-white">
                 ×{p.qty}
               </span>
               <span className="tabular-nums">₹{p.price}</span>
@@ -697,17 +741,14 @@ function TeamPanel({ team, onAdd, onEdit, onToast, reload }) {
   return (
     <section className="space-y-3">
       <div className="flex items-center gap-3">
-        <h2 className="font-semibold text-ink-900">Delivery boys</h2>
-        <button
-          onClick={onAdd}
-          className="ml-auto rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-semibold text-white"
-        >
+        <h2 className="font-semibold text-black">Delivery boys</h2>
+        <button onClick={onAdd} className="btn btn-blue ml-auto px-3.5 py-2 text-sm">
           + Add delivery boy
         </button>
       </div>
 
       {team.length === 0 && (
-        <p className="rounded-2xl bg-white p-8 text-center text-ink-500 ring-1 ring-ink-200">
+        <p className="rounded-2xl border border-ink-200 bg-white p-8 text-center text-ink-500">
           No delivery boys yet. Add one and they can sign in with their phone number.
         </p>
       )}
@@ -716,16 +757,16 @@ function TeamPanel({ team, onAdd, onEdit, onToast, reload }) {
         {team.map((r) => (
           <div
             key={r.id}
-            className={`rounded-2xl bg-white p-4 ring-1 ${
-              r.active ? 'ring-ink-200' : 'opacity-60 ring-ink-200'
+            className={`rounded-2xl border border-ink-200 bg-white p-4 shadow-sm ${
+              r.active ? '' : 'opacity-60'
             }`}
           >
             <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-xl bg-brand-100 font-bold text-brand-800">
+              <span className="grid size-10 place-items-center rounded-xl bg-brand-200 font-bold text-brand-900">
                 {r.name.slice(0, 2).toUpperCase()}
               </span>
               <div className="min-w-0">
-                <div className="truncate font-semibold text-ink-900">{r.name}</div>
+                <div className="truncate font-semibold text-black">{r.name}</div>
                 <div className="font-mono text-sm text-ink-500 tabular-nums">
                   {prettyPhone(r.phone)}
                 </div>
@@ -737,15 +778,12 @@ function TeamPanel({ team, onAdd, onEdit, onToast, reload }) {
             </p>
 
             <div className="mt-3 flex gap-2">
-              <button
-                onClick={() => onEdit(r)}
-                className="flex-1 rounded-lg border border-ink-300 py-2 text-sm font-medium"
-              >
+              <button onClick={() => onEdit(r)} className="btn btn-ghost flex-1 py-2 text-sm">
                 Edit
               </button>
               <button
                 onClick={() => toggleActive(r)}
-                className="flex-1 rounded-lg border border-ink-300 py-2 text-sm font-medium text-ink-600"
+                className="btn btn-ghost flex-1 py-2 text-sm"
               >
                 {r.active ? 'Turn off' : 'Turn on'}
               </button>
@@ -760,28 +798,29 @@ function TeamPanel({ team, onAdd, onEdit, onToast, reload }) {
 function Modal({ title, children, onClose }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-ink-950/60 md:items-center"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center"
       onClick={onClose}
     >
       <div
-        className="max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 pb-7 md:max-w-lg md:rounded-2xl"
+        className="max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 pb-7 shadow-2xl md:max-w-lg md:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-200 md:hidden" />
-        <h2 className="text-lg font-semibold text-ink-900">{title}</h2>
+        <h2 className="text-lg font-semibold text-black">{title}</h2>
         {children}
       </div>
     </div>
   );
 }
 
-function Input({ label, ...props }) {
+function Input({ label, hint, ...props }) {
   return (
     <label className="block">
       <span className="text-sm font-medium text-ink-700">{label}</span>
+      {hint && <span className="ml-1 text-xs text-ink-400">{hint}</span>}
       <input
         {...props}
-        className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-ink-900"
+        className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-brand-600"
       />
     </label>
   );
@@ -812,150 +851,22 @@ function RiderForm({ rider, onDone }) {
     <div className="mt-4 space-y-3">
       <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
       <Input
-        label="Phone number (this is their login id)"
+        label="Phone number"
+        hint="this is their login id"
         value={phone}
         inputMode="numeric"
         onChange={(e) => setPhone(e.target.value)}
       />
       <Input
-        label={rider ? 'New password (leave blank to keep the old one)' : 'Password'}
+        label={rider ? 'New password' : 'Password'}
+        hint={rider ? 'blank keeps the old one' : ''}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
-
-      {err && (
-        <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-600">{err}</p>
-      )}
-
-      <button
-        onClick={submit}
-        disabled={busy}
-        className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
-      >
-        {busy ? <><span className="pk-spinner" />Saving</> : rider ? 'Save changes' : 'Add delivery boy'}
-      </button>
-    </div>
-  );
-}
-
-function NewOrderForm({ riders, onDone }) {
-  const [f, setF] = useState({ customerName: '', phone: '', pincode: '', address: '', riderId: '' });
-  const [items, setItems] = useState([{ name: '', qty: 1, price: '' }]);
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const area = areaFor(f.pincode);
-
-  const setItem = (i, k, v) =>
-    setItems(items.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
-
-  async function submit() {
-    setBusy(true);
-    setErr('');
-    const res = await fetch('/api/orders/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...f, products: items }),
-    });
-    const d = await res.json();
-    setBusy(false);
-    if (!res.ok) return setErr(d.error || 'Could not create');
-    onDone(`Order ${d.order.orderNumber} created`);
-  }
-
-  return (
-    <div className="mt-4 space-y-3">
-      <Input
-        label="Customer name"
-        value={f.customerName}
-        onChange={(e) => setF({ ...f, customerName: e.target.value })}
-      />
-      <Input
-        label="Phone number"
-        value={f.phone}
-        inputMode="numeric"
-        onChange={(e) => setF({ ...f, phone: e.target.value })}
-      />
-
-      <div>
-        <Input
-          label="Pincode"
-          value={f.pincode}
-          inputMode="numeric"
-          onChange={(e) => setF({ ...f, pincode: e.target.value })}
-        />
-        {f.pincode.length >= 6 && (
-          <p className={`mt-1 text-sm ${area ? 'text-good-600' : 'text-ink-500'}`}>
-            {area || 'No area name saved for this pincode yet'}
-          </p>
-        )}
-      </div>
-
-      <Input
-        label="Address"
-        value={f.address}
-        onChange={(e) => setF({ ...f, address: e.target.value })}
-      />
-
-      <div>
-        <span className="text-sm font-medium text-ink-700">Products</span>
-        <div className="mt-1 space-y-2">
-          {items.map((it, i) => (
-            <div key={i} className="flex gap-2">
-              <input
-                value={it.name}
-                onChange={(e) => setItem(i, 'name', e.target.value)}
-                placeholder="Product name"
-                className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3 py-2.5 outline-none focus:border-ink-900"
-              />
-              <input
-                value={it.qty}
-                onChange={(e) => setItem(i, 'qty', e.target.value)}
-                inputMode="numeric"
-                className="w-14 rounded-xl border border-ink-300 px-2 py-2.5 text-center outline-none"
-              />
-              <input
-                value={it.price}
-                onChange={(e) => setItem(i, 'price', e.target.value)}
-                inputMode="numeric"
-                placeholder="₹"
-                className="w-20 rounded-xl border border-ink-300 px-2 py-2.5 outline-none"
-              />
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={() => setItems([...items, { name: '', qty: 1, price: '' }])}
-          className="mt-2 text-sm font-semibold text-brand-700"
-        >
-          + Add another product
-        </button>
-      </div>
-
-      <label className="block">
-        <span className="text-sm font-medium text-ink-700">Give to (optional)</span>
-        <select
-          value={f.riderId}
-          onChange={(e) => setF({ ...f, riderId: e.target.value })}
-          className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3"
-        >
-          <option value="">Leave unassigned</option>
-          {riders.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
       {err && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-600">{err}</p>}
-
-      <button
-        onClick={submit}
-        disabled={busy}
-        className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
-      >
-        {busy ? <><span className="pk-spinner" />Creating</> : 'Create order'}
+      <button onClick={submit} disabled={busy} className="btn btn-blue w-full py-3.5">
+        {busy && <span className="pk-spinner" />}
+        {busy ? 'Saving' : rider ? 'Save changes' : 'Add delivery boy'}
       </button>
     </div>
   );
@@ -991,26 +902,170 @@ function AccountForm({ onDone }) {
         onChange={(e) => setCurrent(e.target.value)}
       />
       <Input
-        label="New phone number (leave blank to keep the same)"
+        label="New phone number"
+        hint="blank keeps the same"
         inputMode="numeric"
         value={newPhone}
         onChange={(e) => setPhone(e.target.value)}
       />
       <Input
-        label="New password (leave blank to keep the same)"
+        label="New password"
+        hint="blank keeps the same"
         type="password"
         value={newPassword}
         onChange={(e) => setPass(e.target.value)}
       />
-
-      {err && <p className="rounded-lg bg-ink-100 px-3 py-2 text-sm text-ink-900">{err}</p>}
-
+      {err && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-600">{err}</p>}
       <button
         onClick={save}
         disabled={busy || !currentPassword}
-        className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
+        className="btn btn-blue w-full py-3.5"
       >
-        {busy ? <><span className="pk-spinner" />Saving</> : 'Save changes'}
+        {busy && <span className="pk-spinner" />}
+        {busy ? 'Saving' : 'Save changes'}
+      </button>
+    </div>
+  );
+}
+
+function NewOrderForm({ riders, onDone }) {
+  const [f, setF] = useState({
+    customerName: '',
+    phone: '',
+    pincode: '',
+    address: '',
+    riderId: '',
+  });
+  const [items, setItems] = useState([{ name: '', qty: 1, price: '' }]);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const area = areaFor(f.pincode);
+  const phoneOk = String(f.phone).replace(/\D/g, '').length >= 10;
+
+  const setItem = (i, k, v) =>
+    setItems(items.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
+
+  async function submit() {
+    setBusy(true);
+    setErr('');
+    const res = await fetch('/api/orders/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...f, products: items }),
+    });
+    const d = await res.json();
+    setBusy(false);
+    if (!res.ok) return setErr(d.error || 'Could not create');
+    onDone(`Order ${d.order.orderNumber} created`);
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <p className="rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">
+        Only the phone number is needed. Fill the rest in later if you are in a hurry.
+      </p>
+
+      <Input
+        label="Phone number"
+        hint="required"
+        value={f.phone}
+        inputMode="numeric"
+        onChange={(e) => setF({ ...f, phone: e.target.value })}
+      />
+      <Input
+        label="Customer name"
+        hint="optional"
+        value={f.customerName}
+        onChange={(e) => setF({ ...f, customerName: e.target.value })}
+      />
+
+      <div>
+        <Input
+          label="Pincode"
+          hint="optional"
+          value={f.pincode}
+          inputMode="numeric"
+          onChange={(e) => setF({ ...f, pincode: e.target.value })}
+        />
+        {String(f.pincode).replace(/\D/g, '').length >= 6 && (
+          <p
+            className={`mt-1 text-sm font-semibold ${area ? 'text-good-600' : 'text-warn-600'}`}
+          >
+            {area || 'No area name saved for this pincode yet'}
+          </p>
+        )}
+      </div>
+
+      <Input
+        label="Address"
+        hint="optional"
+        value={f.address}
+        onChange={(e) => setF({ ...f, address: e.target.value })}
+      />
+
+      <div>
+        <span className="text-sm font-medium text-ink-700">Products</span>
+        <span className="ml-1 text-xs text-ink-400">optional</span>
+        <div className="mt-1 space-y-2">
+          {items.map((it, i) => (
+            <div key={i} className="flex gap-2">
+              <input
+                value={it.name}
+                onChange={(e) => setItem(i, 'name', e.target.value)}
+                placeholder="Product name"
+                className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3 py-2.5 outline-none focus:border-brand-600"
+              />
+              <input
+                value={it.qty}
+                onChange={(e) => setItem(i, 'qty', e.target.value)}
+                inputMode="numeric"
+                className="w-14 rounded-xl border border-ink-300 px-2 py-2.5 text-center outline-none"
+              />
+              <input
+                value={it.price}
+                onChange={(e) => setItem(i, 'price', e.target.value)}
+                inputMode="numeric"
+                placeholder="₹"
+                className="w-20 rounded-xl border border-ink-300 px-2 py-2.5 outline-none"
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => setItems([...items, { name: '', qty: 1, price: '' }])}
+          className="btn btn-plain mt-2 px-0 text-sm text-brand-700"
+        >
+          + Add another product
+        </button>
+      </div>
+
+      <label className="block">
+        <span className="text-sm font-medium text-ink-700">Give to</span>
+        <span className="ml-1 text-xs text-ink-400">optional</span>
+        <select
+          value={f.riderId}
+          onChange={(e) => setF({ ...f, riderId: e.target.value })}
+          className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3"
+        >
+          <option value="">Leave unassigned</option>
+          {riders.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {err && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-600">{err}</p>}
+
+      <button
+        onClick={submit}
+        disabled={busy || !phoneOk}
+        className="btn btn-blue w-full py-3.5"
+      >
+        {busy && <span className="pk-spinner" />}
+        {busy ? 'Creating' : 'Create order'}
       </button>
     </div>
   );

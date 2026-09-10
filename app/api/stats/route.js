@@ -13,6 +13,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const from = searchParams.get('from');
   const to = searchParams.get('to');
+  const rider = searchParams.get('rider');
 
   const cutoff = new Date(`${ORDER_CUTOFF}T00:00:00`);
   const range = { gte: cutoff };
@@ -26,11 +27,16 @@ export async function GET(req) {
     range.lte = end;
   }
 
-  const where = { orderDate: range };
+  // Stats use the same date window as the table, and narrow by rider too, so
+  // the whole page reads as one consistent view of the same filter.
+  const base = { orderDate: range };
+  const where = { ...base };
+  if (rider === 'unassigned') where.assignedToId = null;
+  else if (rider) where.assignedToId = Number(rider);
 
   const [byStatus, unassigned, total, riders, perRider, byArea, byPayment] = await Promise.all([
     prisma.order.groupBy({ by: ['status'], where, _count: { _all: true } }),
-    prisma.order.count({ where: { ...where, assignedToId: null } }),
+    prisma.order.count({ where: { ...base, assignedToId: null } }),
     prisma.order.count({ where }),
     prisma.user.findMany({
       where: { role: 'delivery', active: true },
@@ -39,7 +45,7 @@ export async function GET(req) {
     }),
     prisma.order.groupBy({
       by: ['assignedToId', 'status'],
-      where: { ...where, assignedToId: { not: null } },
+      where: { ...base, assignedToId: { not: null } },
       _count: { _all: true },
     }),
     prisma.order.groupBy({

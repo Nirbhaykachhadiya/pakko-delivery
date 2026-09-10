@@ -37,9 +37,14 @@ export async function POST(req) {
 
   const isAttempt = status === 'rescheduled' || status === 'cancelled';
 
+  // Fixing cash/online on an already delivered order must not move the
+  // original delivery time
+  const keepDeliveredAt = order.status === 'delivered' && status === 'delivered';
+
   const data = {
     status,
-    deliveredAt: status === 'delivered' ? new Date() : null,
+    deliveredAt:
+      status === 'delivered' ? (keepDeliveredAt ? order.deliveredAt : new Date()) : null,
     paymentMode: status === 'delivered' ? paymentMode : null,
     cancelledAt: status === 'cancelled' ? new Date() : null,
     cancelReason: status === 'cancelled' ? cancelReason : null,

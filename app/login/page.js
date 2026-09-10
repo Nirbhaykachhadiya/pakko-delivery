@@ -31,19 +31,24 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col justify-center bg-ink-900 p-6">
+    <main className="flex min-h-dvh flex-col justify-center bg-white p-6">
       <div className="mx-auto w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <div className="mx-auto grid size-14 place-items-center rounded-2xl bg-brand-200 text-lg font-bold text-brand-900">
+        <div className="mb-7 text-center">
+          <div className="mx-auto grid size-16 place-items-center rounded-2xl bg-brand-600 text-xl font-bold text-white shadow-lg shadow-brand-600/25">
             PA
           </div>
-          <h1 className="mt-4 text-2xl font-bold tracking-tight text-white">Pakko Amdavadi</h1>
-          <p className="mt-1 text-brand-100">Sign in to see your deliveries</p>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight text-black">
+            Pakko Amdavadi
+          </h1>
+          <p className="mt-1 text-ink-500">Sign in to see your deliveries</p>
         </div>
 
-        <form onSubmit={submit} className="space-y-3 rounded-2xl bg-white p-5">
+        <form
+          onSubmit={submit}
+          className="space-y-4 rounded-2xl border border-ink-200 bg-white p-6 shadow-xl shadow-brand-900/10"
+        >
           <label className="block">
-            <span className="text-sm font-medium text-ink-700">Phone number</span>
+            <span className="text-sm font-semibold text-black">Phone number</span>
             <input
               type="tel"
               inputMode="numeric"
@@ -51,32 +56,35 @@ export default function LoginPage() {
               onChange={(e) => setPhone(e.target.value)}
               autoComplete="username"
               required
-              className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3.5 text-lg tabular-nums outline-none focus:border-brand-600"
+              className="mt-1.5 w-full rounded-xl border border-ink-300 bg-white px-3.5 py-3.5 text-lg text-black tabular-nums outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-200"
             />
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-ink-700">Password</span>
+            <span className="text-sm font-semibold text-black">Password</span>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
               required
-              className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3.5 text-lg outline-none focus:border-brand-600"
+              className="mt-1.5 w-full rounded-xl border border-ink-300 bg-white px-3.5 py-3.5 text-lg text-black outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-200"
             />
           </label>
 
           {error && (
-            <p className="rounded-lg bg-stop-50 px-3 py-2.5 text-sm text-stop-600">{error}</p>
+            <p className="rounded-lg bg-stop-50 px-3 py-2.5 text-sm font-medium text-stop-600">
+              {error}
+            </p>
           )}
 
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-xl bg-brand-600 py-3.5 text-lg font-semibold text-white active:bg-brand-700 disabled:opacity-50"
+            className="btn btn-blue w-full py-3.5 text-lg shadow-lg shadow-brand-600/20"
           >
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy && <span className="pk-spinner" />}
+            {busy ? 'Signing in' : 'Sign in'}
           </button>
         </form>
       </div>

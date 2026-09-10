@@ -1,14 +1,12 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   PAKKO AMDAVADI - BRAND COLOURS
+   PAKKO AMDAVADI
    --------------------------------------------------------------------------
-   Four colours only:
-     #235A95  deep blue   - chrome, primary actions, delivered
-     #B8EAFB  light blue  - highlights, pending, selected states
-     #000000  black       - text, cancelled
-     #FFFFFF  white       - surfaces
-   Change the two lines marked EDIT ME and the whole app follows.
+   Brand         #235A95 deep blue   ·  #B8EAFB light blue  ·  black  ·  white
+   Status only   green delivered · yellow pending · red cancelled
+
+   Change the lines marked EDIT ME and the whole app follows.
    ========================================================================== */
 
 @theme {
@@ -36,18 +34,24 @@
   --color-ink-900: #000000;
   --color-ink-950: #000000;
 
-  --color-good-50:  #f2f9fe;
-  --color-good-500: #235a95;
-  --color-good-600: #1c4876;
+  /* status colours */
+  --color-good-50:  #e8f7ed;
+  --color-good-100: #c8ecd4;
+  --color-good-500: #16a34a;  /* EDIT ME - delivered green */
+  --color-good-600: #12833c;
+  --color-good-900: #0a4d24;
 
-  --color-warn-50:  #f2f9fe;
-  --color-warn-200: #b8eafb;
-  --color-warn-500: #b8eafb;
-  --color-warn-600: #8ad4f0;
+  --color-warn-50:  #fdf6e0;
+  --color-warn-100: #fbeab8;
+  --color-warn-500: #eab308;  /* EDIT ME - pending yellow */
+  --color-warn-600: #ca9a06;
+  --color-warn-900: #6b4f02;
 
-  --color-stop-50:  #f3f4f5;
-  --color-stop-500: #000000;
-  --color-stop-600: #14181c;
+  --color-stop-50:  #fdeaea;
+  --color-stop-100: #f9caca;
+  --color-stop-500: #dc2626;  /* EDIT ME - cancelled red */
+  --color-stop-600: #b91c1c;
+  --color-stop-900: #7a1414;
 }
 
 html { -webkit-tap-highlight-color: transparent; }
@@ -59,36 +63,58 @@ body {
 }
 
 /* ==========================================================================
-   PRESS FEEDBACK
-   Every button and link dips slightly and dims the instant it is touched, so
-   a tap is felt even before the network answers. Applied globally so no
-   button can be missed.
+   BUTTONS
+   Every button uses .btn plus one colour class. On press the colours swap
+   over and the label underlines, so a tap is unmistakable on any screen.
    ========================================================================== */
 
-button,
-a[role="button"],
-a[href^="tel:"],
-label[role="button"] {
-  transition:
-    transform 90ms cubic-bezier(0.2, 0, 0.2, 1),
-    filter 120ms ease,
-    opacity 120ms ease;
+.btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  text-align: center;
   touch-action: manipulation;
+  transition:
+    background-color 90ms ease,
+    color 90ms ease,
+    transform 90ms cubic-bezier(0.2, 0, 0.2, 1);
 }
 
-button:active:not(:disabled),
-a[role="button"]:active,
-a[href^="tel:"]:active,
-label[role="button"]:active {
-  transform: scale(0.96);
-  filter: brightness(0.92);
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-button:disabled {
-  cursor: not-allowed;
-}
+.btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
-/* Keyboard users get a visible ring too */
+.btn-blue   { background: var(--color-brand-600); color: #fff; }
+.btn-blue:active:not(:disabled)   { background: var(--color-brand-200); color: var(--color-brand-900); }
+
+.btn-light  { background: var(--color-brand-200); color: var(--color-brand-900); }
+.btn-light:active:not(:disabled)  { background: var(--color-brand-600); color: #fff; }
+
+.btn-green  { background: var(--color-good-500); color: #fff; }
+.btn-green:active:not(:disabled)  { background: var(--color-good-100); color: var(--color-good-900); }
+
+.btn-yellow { background: var(--color-warn-500); color: #3a2b00; }
+.btn-yellow:active:not(:disabled) { background: var(--color-warn-100); color: var(--color-warn-900); }
+
+.btn-red    { background: var(--color-stop-500); color: #fff; }
+.btn-red:active:not(:disabled)    { background: var(--color-stop-100); color: var(--color-stop-900); }
+
+.btn-ghost  { background: #fff; color: var(--color-ink-700); border: 1px solid var(--color-ink-300); }
+.btn-ghost:active:not(:disabled)  { background: var(--color-brand-200); color: var(--color-brand-900); }
+
+.btn-plain  { background: transparent; color: inherit; }
+.btn-plain:active:not(:disabled)  { background: rgba(255,255,255,0.18); }
+
+button, select, label[role="button"], a[role="button"] { cursor: pointer; }
+
 button:focus-visible,
 a:focus-visible,
 select:focus-visible,
@@ -98,24 +124,18 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-/* Selects and inputs shift subtly when touched */
-select:active { filter: brightness(0.96); }
-
-/* Small spinner used inside busy buttons */
+/* Busy spinner inside buttons */
 @keyframes pk-spin { to { transform: rotate(360deg); } }
 .pk-spinner {
   display: inline-block;
-  width: 0.9em;
-  height: 0.9em;
+  width: 0.9em; height: 0.9em;
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
   animation: pk-spin 0.6s linear infinite;
-  vertical-align: -0.1em;
-  margin-right: 0.45em;
 }
 
-/* Row flashes briefly after a successful save */
+/* Row highlight after a successful save */
 @keyframes pk-flash {
   0%   { background-color: var(--color-brand-200); }
   100% { background-color: transparent; }
@@ -125,4 +145,12 @@ select:active { filter: brightness(0.96); }
 .no-bar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-bar::-webkit-scrollbar { display: none; }
 
-.date-dark { color-scheme: dark; }
+/* Native date inputs are cramped on small screens - give them room and
+   never let the dd-mm-yyyy text clip. */
+input[type="date"] {
+  min-height: 44px;
+  min-width: 0;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+input[type="date"].date-dark { color-scheme: dark; }
