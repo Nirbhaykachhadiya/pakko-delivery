@@ -24,6 +24,8 @@ export default function AdminDashboard({ user }) {
   const [toast, setToast] = useState('');
   const [picked, setPicked] = useState(new Set());
   const [modal, setModal] = useState(null);
+  const [busyIds, setBusyIds] = useState(new Set());
+  const [flashIds, setFlashIds] = useState(new Set());
 
   const [filters, setFilters] = useState({ status: '', rider: '', q: '', from: '', to: '' });
 
@@ -73,13 +75,22 @@ export default function AdminDashboard({ user }) {
   }
 
   async function assign(orderIds, riderId) {
+    setBusyIds(new Set(orderIds));
     const res = await fetch('/api/orders/assign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderIds, riderId }),
     });
     const d = await res.json();
+    setBusyIds(new Set());
     if (!res.ok) return setToast(d.error || 'Could not assign');
+
+    // brief highlight so the change is visible, not just silent
+    setFlashIds(new Set(orderIds));
+    setTimeout(() => setFlashIds(new Set()), 950);
+
+    const who = riderId ? riders.find((r) => r.id === Number(riderId))?.name : null;
+    setToast(who ? `Given to ${who}` : 'Assignment removed');
     load();
   }
 
@@ -119,7 +130,13 @@ export default function AdminDashboard({ user }) {
               disabled={syncing}
               className="rounded-lg bg-brand-700 px-3 py-2 text-sm font-medium disabled:opacity-50"
             >
-              {syncing ? 'Syncing…' : 'Sync'}
+              {syncing ? <><span className="pk-spinner" />Syncing</> : 'Sync'}
+            </button>
+            <button
+              onClick={() => setModal({ type: 'account' })}
+              className="rounded-lg px-2 py-2 text-sm text-brand-100 hover:text-white"
+            >
+              Account
             </button>
             <button
               onClick={logout}
@@ -259,6 +276,8 @@ export default function AdminDashboard({ user }) {
                     order={o}
                     riders={riders}
                     picked={picked.has(o.id)}
+                    busy={busyIds.has(o.id)}
+                    flash={flashIds.has(o.id)}
                     onToggle={() => toggle(o.id)}
                     onAssign={(rid) => assign([o.id], rid)}
                   />
@@ -297,7 +316,12 @@ export default function AdminDashboard({ user }) {
                       const un = !o.assignedToId;
                       const area = areaFor(o.pincode);
                       return (
-                        <tr key={o.id} className={un ? 'bg-brand-50/60' : 'hover:bg-ink-50'}>
+                        <tr
+                          key={o.id}
+                          className={`${un ? 'bg-brand-50/60' : 'hover:bg-ink-50'} ${
+                            flashIds.has(o.id) ? 'pk-flash' : ''
+                          }`}
+                        >
                           <td className="px-3 py-3 align-top">
                             <input
                               type="checkbox"
@@ -368,6 +392,7 @@ export default function AdminDashboard({ user }) {
                           <td className="px-3 py-3 align-top">
                             <select
                               value={o.assignedToId || ''}
+                              disabled={busyIds.has(o.id)}
                               onChange={(e) =>
                                 assign([o.id], e.target.value ? Number(e.target.value) : null)
                               }
@@ -408,6 +433,17 @@ export default function AdminDashboard({ user }) {
               setModal(null);
               setToast(msg);
               load();
+            }}
+          />
+        </Modal>
+      )}
+
+      {modal?.type === 'account' && (
+        <Modal title="My account" onClose={() => setModal(null)}>
+          <AccountForm
+            onDone={(msg) => {
+              setModal(null);
+              setToast(msg);
             }}
           />
         </Modal>
@@ -560,7 +596,7 @@ function Filters({ filters, setFilters, riders, onToday }) {
   );
 }
 
-function AdminOrderCard({ order: o, riders, picked, onToggle, onAssign }) {
+function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAssign }) {
   const un = !o.assignedToId;
   const area = areaFor(o.pincode);
 
@@ -568,7 +604,7 @@ function AdminOrderCard({ order: o, riders, picked, onToggle, onAssign }) {
     <article
       className={`overflow-hidden rounded-2xl bg-white ring-1 ${
         un ? 'ring-brand-300' : 'ring-ink-200'
-      }`}
+      } ${flash ? 'pk-flash' : ''}`}
     >
       <div
         className={`flex items-center gap-2 px-3 py-2.5 ${un ? 'bg-brand-50' : 'bg-ink-50'}`}
@@ -621,8 +657,9 @@ function AdminOrderCard({ order: o, riders, picked, onToggle, onAssign }) {
 
         <select
           value={o.assignedToId || ''}
+          disabled={busy}
           onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
-          className={`w-full rounded-lg border px-3 py-2.5 text-sm font-medium ${
+          className={`w-full rounded-lg border px-3 py-2.5 text-sm font-medium disabled:opacity-50 ${
             un ? 'border-brand-400 bg-brand-50' : 'border-ink-300'
           }`}
         >
@@ -795,7 +832,7 @@ function RiderForm({ rider, onDone }) {
         disabled={busy}
         className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
       >
-        {busy ? 'Saving…' : rider ? 'Save changes' : 'Add delivery boy'}
+        {busy ? <><span className="pk-spinner" />Saving</> : rider ? 'Save changes' : 'Add delivery boy'}
       </button>
     </div>
   );
@@ -918,7 +955,62 @@ function NewOrderForm({ riders, onDone }) {
         disabled={busy}
         className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
       >
-        {busy ? 'Creating…' : 'Create order'}
+        {busy ? <><span className="pk-spinner" />Creating</> : 'Create order'}
+      </button>
+    </div>
+  );
+}
+
+function AccountForm({ onDone }) {
+  const [currentPassword, setCurrent] = useState('');
+  const [newPhone, setPhone] = useState('');
+  const [newPassword, setPass] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setErr('');
+    const res = await fetch('/api/auth/account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPhone, newPassword }),
+    });
+    const d = await res.json();
+    setBusy(false);
+    if (!res.ok) return setErr(d.error || 'Could not save');
+    onDone('Account updated');
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <Input
+        label="Current password"
+        type="password"
+        value={currentPassword}
+        onChange={(e) => setCurrent(e.target.value)}
+      />
+      <Input
+        label="New phone number (leave blank to keep the same)"
+        inputMode="numeric"
+        value={newPhone}
+        onChange={(e) => setPhone(e.target.value)}
+      />
+      <Input
+        label="New password (leave blank to keep the same)"
+        type="password"
+        value={newPassword}
+        onChange={(e) => setPass(e.target.value)}
+      />
+
+      {err && <p className="rounded-lg bg-ink-100 px-3 py-2 text-sm text-ink-900">{err}</p>}
+
+      <button
+        onClick={save}
+        disabled={busy || !currentPassword}
+        className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
+      >
+        {busy ? <><span className="pk-spinner" />Saving</> : 'Save changes'}
       </button>
     </div>
   );

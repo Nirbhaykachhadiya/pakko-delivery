@@ -42,6 +42,7 @@ export default function DeliveryDashboard({ user }) {
   const [loading, setLoading] = useState(true);
   const [sheet, setSheet] = useState(null);
   const [toast, setToast] = useState('');
+  const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,12 +66,14 @@ export default function DeliveryDashboard({ user }) {
   }, [toast]);
 
   async function setStatus(orderId, status, extra = {}) {
+    setBusyId(orderId);
     const res = await fetch('/api/orders/status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderId, status, ...extra }),
     });
     const d = await res.json();
+    setBusyId(null);
     if (!res.ok) return setToast(d.error || 'Could not save');
     setSheet(null);
     setToast(
@@ -86,12 +89,14 @@ export default function DeliveryDashboard({ user }) {
   }
 
   async function handover(orderId, riderId, riderName) {
+    setBusyId(orderId);
     const res = await fetch('/api/orders/assign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderIds: [orderId], riderId }),
     });
     const d = await res.json();
+    setBusyId(null);
     if (!res.ok) return setToast(d.error || 'Could not pass it on');
     setSheet(null);
     setToast(`Given to ${riderName}`);
@@ -147,12 +152,20 @@ export default function DeliveryDashboard({ user }) {
               {day ? fmtDate(day) : 'All days'} · {shown.length} orders
             </div>
           </div>
-          <button
-            onClick={logout}
-            className="ml-auto rounded-lg px-2 py-1 text-sm text-brand-100 active:bg-brand-700"
-          >
-            Sign out
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => setSheet({ mode: 'account' })}
+              className="rounded-lg px-2 py-1.5 text-sm text-brand-100 active:bg-brand-700"
+            >
+              Account
+            </button>
+            <button
+              onClick={logout}
+              className="rounded-lg px-2 py-1.5 text-sm text-brand-100 active:bg-brand-700"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
 
         <div className="no-bar flex items-center gap-2 overflow-x-auto px-4 pb-3">
@@ -231,6 +244,7 @@ export default function DeliveryDashboard({ user }) {
               key={o.id}
               order={o}
               tab={tab}
+              busy={busyId === o.id}
               onCopy={setToast}
               onDeliver={() => setSheet({ mode: 'deliver', order: o })}
               onPending={() => setSheet({ mode: 'pending', order: o })}
@@ -266,6 +280,9 @@ export default function DeliveryDashboard({ user }) {
           }
         />
       )}
+      {sheet?.mode === 'account' && (
+        <AccountSheet user={user} onClose={() => setSheet(null)} onDone={setToast} />
+      )}
       {sheet?.mode === 'give' && (
         <GiveSheet
           order={sheet.order}
@@ -284,7 +301,7 @@ export default function DeliveryDashboard({ user }) {
   );
 }
 
-function OrderCard({ order: o, tab, onDeliver, onPending, onCancel, onGive, onUndo, onCopy }) {
+function OrderCard({ order: o, tab, busy, onDeliver, onPending, onCancel, onGive, onUndo, onCopy }) {
   const pin = normalisePin(o.pincode);
   const area = areaFor(o.pincode);
   const tel = telHref(o.phone);
@@ -393,19 +410,23 @@ function OrderCard({ order: o, tab, onDeliver, onPending, onCancel, onGive, onUn
             <div className="mt-4 grid grid-cols-3 gap-2">
               <button
                 onClick={onDeliver}
-                className="rounded-xl bg-good-500 py-3.5 text-sm font-bold text-white active:bg-good-600"
+                disabled={busy}
+                className="rounded-xl bg-good-500 py-3.5 text-sm font-bold text-white active:bg-good-600 disabled:opacity-60"
               >
+                {busy ? <span className="pk-spinner" /> : null}
                 Delivered
               </button>
               <button
                 onClick={onPending}
-                className="rounded-xl bg-warn-500 py-3.5 text-sm font-bold text-brand-900 ring-1 ring-brand-300"
+                disabled={busy}
+                className="rounded-xl bg-warn-500 py-3.5 text-sm font-bold text-brand-900 ring-1 ring-brand-300 disabled:opacity-60"
               >
                 Pending
               </button>
               <button
                 onClick={onCancel}
-                className="rounded-xl bg-stop-500 py-3.5 text-sm font-bold text-white active:bg-stop-600"
+                disabled={busy}
+                className="rounded-xl bg-stop-500 py-3.5 text-sm font-bold text-white active:bg-stop-600 disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -414,6 +435,7 @@ function OrderCard({ order: o, tab, onDeliver, onPending, onCancel, onGive, onUn
               {tel ? (
                 <a
                   href={tel}
+                  role="button"
                   className="flex items-center justify-center rounded-xl bg-ink-900 py-3 text-sm font-semibold text-white active:bg-ink-700"
                 >
                   Call
@@ -436,6 +458,7 @@ function OrderCard({ order: o, tab, onDeliver, onPending, onCancel, onGive, onUn
             {tel ? (
               <a
                 href={tel}
+                role="button"
                 className="flex items-center justify-center rounded-xl bg-ink-900 py-3 text-sm font-semibold text-white"
               >
                 Call
@@ -675,6 +698,76 @@ function CancelSheet({ order, onClose, onConfirm }) {
           className="flex-1 rounded-xl bg-stop-500 py-3.5 font-semibold text-white disabled:opacity-40"
         >
           Mark cancelled
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+function AccountSheet({ user, onClose, onDone }) {
+  const [currentPassword, setCurrent] = useState('');
+  const [newPhone, setPhone] = useState('');
+  const [newPassword, setPass] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setErr('');
+    const res = await fetch('/api/auth/account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPhone, newPassword }),
+    });
+    const d = await res.json();
+    setBusy(false);
+    if (!res.ok) return setErr(d.error || 'Could not save');
+    onClose();
+    onDone('Account updated');
+  }
+
+  return (
+    <Sheet title="My account" subtitle={user.name} onClose={onClose}>
+      <div className="mt-4 space-y-3">
+        <label className="block">
+          <span className="text-sm font-medium text-ink-700">Current password</span>
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrent(e.target.value)}
+            className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-brand-600"
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-ink-700">New phone number (optional)</span>
+          <input
+            inputMode="numeric"
+            value={newPhone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="Leave blank to keep the same"
+            className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-brand-600"
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-ink-700">New password (optional)</span>
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(e) => setPass(e.target.value)}
+            placeholder="Leave blank to keep the same"
+            className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-brand-600"
+          />
+        </label>
+
+        {err && <p className="rounded-lg bg-ink-100 px-3 py-2 text-sm text-ink-900">{err}</p>}
+
+        <button
+          onClick={save}
+          disabled={busy || !currentPassword}
+          className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
+        >
+          {busy ? <span className="pk-spinner" /> : null}
+          {busy ? 'Saving' : 'Save changes'}
         </button>
       </div>
     </Sheet>

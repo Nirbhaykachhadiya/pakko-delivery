@@ -8,14 +8,10 @@
      #B8EAFB  light blue  - highlights, pending, selected states
      #000000  black       - text, cancelled
      #FFFFFF  white       - surfaces
-
-   Every value below is one of those four, or a tint of them mixed against
-   white. Nothing new is introduced. Change the two lines marked EDIT ME and
-   the whole app follows.
+   Change the two lines marked EDIT ME and the whole app follows.
    ========================================================================== */
 
 @theme {
-  /* ---- Blue scale, built from #235A95 and #B8EAFB ---- */
   --color-brand-50:  #f2f9fe;
   --color-brand-100: #ddf2fd;
   --color-brand-200: #b8eafb;  /* EDIT ME - light brand blue */
@@ -28,7 +24,6 @@
   --color-brand-900: #10253c;
   --color-brand-950: #081726;
 
-  /* ---- Neutrals: black at reducing strength over white ---- */
   --color-ink-50:  #f6f8fa;
   --color-ink-100: #ebeff3;
   --color-ink-200: #d9e0e8;
@@ -41,10 +36,6 @@
   --color-ink-900: #000000;
   --color-ink-950: #000000;
 
-  /* ---- Status: separated by fill weight, not hue ----
-     delivered = solid deep blue
-     pending   = light blue fill with dark text
-     cancelled = solid black                            */
   --color-good-50:  #f2f9fe;
   --color-good-500: #235a95;
   --color-good-600: #1c4876;
@@ -66,6 +57,70 @@ body {
   color: #000000;
   overscroll-behavior-y: none;
 }
+
+/* ==========================================================================
+   PRESS FEEDBACK
+   Every button and link dips slightly and dims the instant it is touched, so
+   a tap is felt even before the network answers. Applied globally so no
+   button can be missed.
+   ========================================================================== */
+
+button,
+a[role="button"],
+a[href^="tel:"],
+label[role="button"] {
+  transition:
+    transform 90ms cubic-bezier(0.2, 0, 0.2, 1),
+    filter 120ms ease,
+    opacity 120ms ease;
+  touch-action: manipulation;
+}
+
+button:active:not(:disabled),
+a[role="button"]:active,
+a[href^="tel:"]:active,
+label[role="button"]:active {
+  transform: scale(0.96);
+  filter: brightness(0.92);
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Keyboard users get a visible ring too */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+/* Selects and inputs shift subtly when touched */
+select:active { filter: brightness(0.96); }
+
+/* Small spinner used inside busy buttons */
+@keyframes pk-spin { to { transform: rotate(360deg); } }
+.pk-spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: pk-spin 0.6s linear infinite;
+  vertical-align: -0.1em;
+  margin-right: 0.45em;
+}
+
+/* Row flashes briefly after a successful save */
+@keyframes pk-flash {
+  0%   { background-color: var(--color-brand-200); }
+  100% { background-color: transparent; }
+}
+.pk-flash { animation: pk-flash 900ms ease-out; }
 
 .no-bar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-bar::-webkit-scrollbar { display: none; }
