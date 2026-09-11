@@ -2,14 +2,12 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { fetchShopifyOrders, mapOrder } from '@/lib/shopify';
 import { requireRole } from '@/lib/auth';
-import { ORDER_CUTOFF } from '@/lib/constants';
+import { ORDER_CUTOFF, MIN_ORDER_NUMBER, orderNumberValue } from '@/lib/constants';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Only these fields come from Shopify. Everything else (assignment, status,
-// notes) is ours and must never be touched by a sync.
 function shopifyFields(d) {
   return {
     customerName: d.customerName,
@@ -22,7 +20,6 @@ function shopifyFields(d) {
   };
 }
 
-// Cheap comparison so unchanged orders are skipped entirely
 function sameAsStored(a, b) {
   return (
     a.customerName === b.customerName &&
@@ -34,7 +31,7 @@ function sameAsStored(a, b) {
   );
 }
 
-export async function POST(req) {
+export async function POST() {
   const auth = await requireRole('admin');
   if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
@@ -44,13 +41,23 @@ export async function POST(req) {
   try {
     const raw = await fetchShopifyOrders({ since: cutoff });
 
-    const incoming = raw.map(mapOrder).filter((d) => d.orderDate >= cutoff);
+    const incoming = raw.map(mapOrder).filter((d) => {
+      if (d.orderDate < cutoff) return false;
+      const n = orderNumberValue(d.orderNumber);
+      // Anything numbered below the starting point is ignored for good
+      return n === null || n >= MIN_ORDER_NUMBER;
+    });
 
     if (incoming.length === 0) {
-      return NextResponse.json({ ok: true, created: 0, updated: 0, skipped: 0, ms: Date.now() - started });
+      return NextResponse.json({
+        ok: true,
+        created: 0,
+        updated: 0,
+        from: MIN_ORDER_NUMBER,
+        ms: Date.now() - started,
+      });
     }
 
-    // ---- ONE query to find out what we already have ----
     const ids = incoming.map((d) => d.shopifyOrderId);
     const existing = await prisma.order.findMany({
       where: { shopifyOrderId: { in: ids } },
@@ -69,25 +76,18 @@ export async function POST(req) {
 
     const toCreate = [];
     const toUpdate = [];
-
     for (const d of incoming) {
       const prev = byId.get(d.shopifyOrderId);
-      if (!prev) {
-        toCreate.push(d);
-      } else if (!sameAsStored(d, prev)) {
-        toUpdate.push(d);
-      }
-      // identical rows are skipped - most orders on a repeat sync
+      if (!prev) toCreate.push(d);
+      else if (!sameAsStored(d, prev)) toUpdate.push(d);
     }
 
-    // ---- ONE query to insert everything new ----
     let created = 0;
     if (toCreate.length) {
       const res = await prisma.order.createMany({ data: toCreate, skipDuplicates: true });
       created = res.count;
     }
 
-    // ---- Changed rows go in batches, not one call each ----
     let updated = 0;
     if (toUpdate.length) {
       const BATCH = 25;
@@ -110,7 +110,7 @@ export async function POST(req) {
       fetched: incoming.length,
       created,
       updated,
-      skipped: incoming.length - created - updated,
+      from: MIN_ORDER_NUMBER,
       ms: Date.now() - started,
     });
   } catch (e) {

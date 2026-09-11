@@ -104,26 +104,24 @@ body {
 .tab {
   cursor: pointer;
   font-weight: 600;
-  padding: 0.5rem 0.15rem;
+  padding: 0.7rem 0.15rem;
   color: var(--color-ink-500);
-  border-bottom: 3px solid transparent;
   white-space: nowrap;
-  transition: color 120ms ease, border-color 120ms ease;
+  transition: color 120ms ease;
 }
 .tab:hover { color: var(--color-brand-700); }
 
+/* one underline only - light blue, under the text */
 .tab-on {
   color: var(--color-brand-600);
-  border-bottom-color: var(--color-brand-200);
   text-decoration: underline;
   text-decoration-color: var(--color-brand-200);
   text-decoration-thickness: 3px;
-  text-underline-offset: 5px;
+  text-underline-offset: 6px;
 }
 
 .tab-on-dark {
   color: var(--color-brand-200);
-  border-bottom-color: var(--color-brand-200);
   text-decoration: underline;
   text-decoration-color: var(--color-brand-200);
   text-decoration-thickness: 3px;

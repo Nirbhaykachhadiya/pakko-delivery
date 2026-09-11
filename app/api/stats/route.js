@@ -13,6 +13,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const from = searchParams.get('from');
   const to = searchParams.get('to');
+  const rider = searchParams.get('rider'); // a rider id narrows every count
 
   const cutoff = new Date(`${ORDER_CUTOFF}T00:00:00`);
   const range = { gte: cutoff };
@@ -26,15 +27,17 @@ export async function GET(req) {
     range.lte = end;
   }
 
-  // Stats deliberately ignore which rider or status is being viewed. They are
-  // the whole picture for the chosen dates, so the numbers never go to zero
-  // just because the list below is narrowed down.
-  const where = { orderDate: range };
+  const base = { orderDate: range };
+
+  // With a rider id the six counts describe that one person. Without it they
+  // describe the whole business, so they never read zero just because the
+  // list below is narrowed.
+  const scoped = rider ? { ...base, assignedToId: Number(rider) } : base;
 
   const [byStatus, unassigned, total, riders, perRider, byPayment] = await Promise.all([
-    prisma.order.groupBy({ by: ['status'], where, _count: { _all: true } }),
-    prisma.order.count({ where: { ...where, assignedToId: null } }),
-    prisma.order.count({ where }),
+    prisma.order.groupBy({ by: ['status'], where: scoped, _count: { _all: true } }),
+    prisma.order.count({ where: { ...base, assignedToId: null } }),
+    prisma.order.count({ where: scoped }),
     prisma.user.findMany({
       where: { role: 'delivery', active: true },
       select: { id: true, name: true },
@@ -42,12 +45,12 @@ export async function GET(req) {
     }),
     prisma.order.groupBy({
       by: ['assignedToId', 'status'],
-      where: { ...where, assignedToId: { not: null } },
+      where: { ...base, assignedToId: { not: null } },
       _count: { _all: true },
     }),
     prisma.order.groupBy({
       by: ['paymentMode'],
-      where: { ...where, status: 'delivered' },
+      where: { ...scoped, status: 'delivered' },
       _count: { _all: true },
     }),
   ]);
@@ -75,7 +78,6 @@ export async function GET(req) {
       id: r.id,
       name: r.name,
       total: rows.reduce((sum, x) => sum + x._count._all, 0),
-      // "assigned" means still carrying it - not delivered, pending or cancelled
       assigned: get('out_for_delivery'),
       rescheduled: get('rescheduled'),
       delivered: get('delivered'),
@@ -83,5 +85,12 @@ export async function GET(req) {
     };
   });
 
-  return NextResponse.json({ total, unassigned, counts, payments, riderStats });
+  return NextResponse.json({
+    total,
+    unassigned: rider ? counts.pending : unassigned,
+    counts,
+    payments,
+    riderStats,
+    scopedToRider: Boolean(rider),
+  });
 }
