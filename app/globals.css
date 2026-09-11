@@ -2,11 +2,8 @@
 
 /* ==========================================================================
    PAKKO AMDAVADI
-   --------------------------------------------------------------------------
-   Brand         #235A95 deep blue   ·  #B8EAFB light blue  ·  black  ·  white
-   Status only   green delivered · yellow pending · red cancelled
-
-   Change the lines marked EDIT ME and the whole app follows.
+   Brand   #235A95 deep blue · #B8EAFB light blue · black · white
+   Status  green delivered · yellow pending · red cancelled
    ========================================================================== */
 
 @theme {
@@ -34,22 +31,21 @@
   --color-ink-900: #000000;
   --color-ink-950: #000000;
 
-  /* status colours */
   --color-good-50:  #e8f7ed;
   --color-good-100: #c8ecd4;
-  --color-good-500: #16a34a;  /* EDIT ME - delivered green */
+  --color-good-500: #16a34a;
   --color-good-600: #12833c;
   --color-good-900: #0a4d24;
 
   --color-warn-50:  #fdf6e0;
   --color-warn-100: #fbeab8;
-  --color-warn-500: #eab308;  /* EDIT ME - pending yellow */
+  --color-warn-500: #eab308;
   --color-warn-600: #ca9a06;
   --color-warn-900: #6b4f02;
 
   --color-stop-50:  #fdeaea;
   --color-stop-100: #f9caca;
-  --color-stop-500: #dc2626;  /* EDIT ME - cancelled red */
+  --color-stop-500: #dc2626;
   --color-stop-600: #b91c1c;
   --color-stop-900: #7a1414;
 }
@@ -64,8 +60,8 @@ body {
 
 /* ==========================================================================
    BUTTONS
-   Every button uses .btn plus one colour class. On press the colours swap
-   over and the label underlines, so a tap is unmistakable on any screen.
+   Pressed state is identical everywhere: white background, light blue text,
+   light blue underline.
    ========================================================================== */
 
 .btn {
@@ -86,45 +82,62 @@ body {
 
 .btn:active:not(:disabled) {
   transform: scale(0.97);
+  background: #ffffff !important;
+  color: var(--color-brand-200) !important;
   text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }
 
 .btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .btn-blue   { background: var(--color-brand-600); color: #fff; }
-.btn-blue:active:not(:disabled)   { background: var(--color-brand-200); color: var(--color-brand-900); }
-
 .btn-light  { background: var(--color-brand-200); color: var(--color-brand-900); }
-.btn-light:active:not(:disabled)  { background: var(--color-brand-600); color: #fff; }
-
 .btn-green  { background: var(--color-good-500); color: #fff; }
-.btn-green:active:not(:disabled)  { background: var(--color-good-100); color: var(--color-good-900); }
-
 .btn-yellow { background: var(--color-warn-500); color: #3a2b00; }
-.btn-yellow:active:not(:disabled) { background: var(--color-warn-100); color: var(--color-warn-900); }
-
 .btn-red    { background: var(--color-stop-500); color: #fff; }
-.btn-red:active:not(:disabled)    { background: var(--color-stop-100); color: var(--color-stop-900); }
-
 .btn-ghost  { background: #fff; color: var(--color-ink-700); border: 1px solid var(--color-ink-300); }
-.btn-ghost:active:not(:disabled)  { background: var(--color-brand-200); color: var(--color-brand-900); }
-
 .btn-plain  { background: transparent; color: inherit; }
-.btn-plain:active:not(:disabled)  { background: rgba(255,255,255,0.18); }
+
+/* Tabs keep the light blue underline while they are the active one */
+.tab {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.5rem 0.15rem;
+  color: var(--color-ink-500);
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.tab:hover { color: var(--color-brand-700); }
+
+.tab-on {
+  color: var(--color-brand-600);
+  border-bottom-color: var(--color-brand-200);
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 5px;
+}
+
+.tab-on-dark {
+  color: var(--color-brand-200);
+  border-bottom-color: var(--color-brand-200);
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 5px;
+}
 
 button, select, label[role="button"], a[role="button"] { cursor: pointer; }
 
-button:focus-visible,
-a:focus-visible,
-select:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
+button:focus-visible, a:focus-visible, select:focus-visible,
+input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--color-brand-600);
   outline-offset: 2px;
 }
 
-/* Busy spinner inside buttons */
 @keyframes pk-spin { to { transform: rotate(360deg); } }
 .pk-spinner {
   display: inline-block;
@@ -135,7 +148,6 @@ textarea:focus-visible {
   animation: pk-spin 0.6s linear infinite;
 }
 
-/* Row highlight after a successful save */
 @keyframes pk-flash {
   0%   { background-color: var(--color-brand-200); }
   100% { background-color: transparent; }
@@ -145,8 +157,6 @@ textarea:focus-visible {
 .no-bar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-bar::-webkit-scrollbar { display: none; }
 
-/* Native date inputs are cramped on small screens - give them room and
-   never let the dd-mm-yyyy text clip. */
 input[type="date"] {
   min-height: 44px;
   min-width: 0;

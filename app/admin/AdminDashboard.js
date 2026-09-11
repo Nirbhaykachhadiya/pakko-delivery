@@ -1,19 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { STATUSES, fmtDateTime, fmtDate, telHref, prettyPhone } from '@/lib/constants';
+import {
+  STATUSES,
+  CANCEL_REASONS,
+  fmtDateTime,
+  fmtDate,
+  telHref,
+  prettyPhone,
+} from '@/lib/constants';
 import { areaFor } from '@/lib/pincodes';
 import PincodeBadge from '@/components/PincodeBadge';
 import DateRange from '@/components/DateRange';
 
-// Admin lands on the only thing that needs action: orders nobody is carrying.
-const DEFAULT_FILTERS = { status: '', rider: 'unassigned', q: '', from: '', to: '' };
+const REFRESH_MS = 25000;
 
 export default function AdminDashboard({ user }) {
   const router = useRouter();
 
-  const [view, setView] = useState('orders');
+  // scope drives WHICH orders are listed
+  //   { kind: 'unassigned' }            -> orders nobody is carrying
+  //   { kind: 'rider', id, name }       -> that rider's currently assigned orders
+  //   { kind: 'status', status }        -> everything with that status
+  const [scope, setScope] = useState({ kind: 'unassigned' });
+
   const [orders, setOrders] = useState([]);
   const [riders, setRiders] = useState([]);
   const [team, setTeam] = useState([]);
@@ -23,48 +34,92 @@ export default function AdminDashboard({ user }) {
   const [toast, setToast] = useState('');
   const [picked, setPicked] = useState(new Set());
   const [modal, setModal] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [busyIds, setBusyIds] = useState(new Set());
   const [flashIds, setFlashIds] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
+  const [view, setView] = useState('orders'); // orders | team
 
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  // Filters are OFF until the admin turns them on
+  const [range, setRange] = useState({ from: '', to: '' });
   const [typedQ, setTypedQ] = useState('');
+  const [q, setQ] = useState('');
 
-  // Wait until typing stops before querying
+  const menuRef = useRef(null);
+
   useEffect(() => {
-    const t = setTimeout(() => setFilters((f) => ({ ...f, q: typedQ })), 350);
+    const t = setTimeout(() => setQ(typedQ), 350);
     return () => clearTimeout(t);
   }, [typedQ]);
 
-  const query = useMemo(() => {
+  useEffect(() => {
+    function close(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  const orderQuery = useMemo(() => {
     const p = new URLSearchParams();
-    Object.entries(filters).forEach(([k, v]) => v && p.set(k, v));
+    if (scope.kind === 'unassigned') p.set('rider', 'unassigned');
+    if (scope.kind === 'rider') {
+      p.set('rider', String(scope.id));
+      p.set('status', 'out_for_delivery');
+    }
+    if (scope.kind === 'status') {
+      if (scope.status === 'pending') p.set('rider', 'unassigned');
+      else p.set('status', scope.status);
+    }
+    if (q) p.set('q', q);
+    if (range.from) p.set('from', range.from);
+    if (range.to) p.set('to', range.to);
     return p.toString();
-  }, [filters]);
+  }, [scope, q, range]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const sq = new URLSearchParams();
-    if (filters.from) sq.set('from', filters.from);
-    if (filters.to) sq.set('to', filters.to);
-    if (filters.rider) sq.set('rider', filters.rider);
+  const statsQuery = useMemo(() => {
+    const p = new URLSearchParams();
+    if (range.from) p.set('from', range.from);
+    if (range.to) p.set('to', range.to);
+    return p.toString();
+  }, [range]);
 
-    const [o, s, u] = await Promise.all([
-      fetch(`/api/orders?${query}`).then((x) => x.json()),
-      fetch(`/api/stats?${sq}`).then((x) => x.json()),
-      fetch('/api/users').then((x) => x.json()),
-    ]);
-
-    setOrders(o.orders || []);
-    setStats(s);
-    setRiders(u.riders || []);
-    setTeam(u.all || []);
-    setPicked(new Set());
-    setLoading(false);
-  }, [query, filters.from, filters.to, filters.rider]);
+  const load = useCallback(
+    async (quiet = false) => {
+      if (!quiet) setLoading(true);
+      const [o, s, u] = await Promise.all([
+        fetch(`/api/orders?${orderQuery}`).then((x) => x.json()),
+        fetch(`/api/stats?${statsQuery}`).then((x) => x.json()),
+        fetch('/api/users').then((x) => x.json()),
+      ]);
+      setOrders(o.orders || []);
+      setStats(s);
+      setRiders(u.riders || []);
+      setTeam(u.all || []);
+      if (!quiet) setPicked(new Set());
+      setLoading(false);
+    },
+    [orderQuery, statsQuery]
+  );
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Keeps the board live while it sits open on a desk, and catches up the
+  // moment the tab is looked at again
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') load(true);
+    }, REFRESH_MS);
+    const onFocus = () => load(true);
+    document.addEventListener('visibilitychange', onFocus);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onFocus);
+      window.removeEventListener('focus', onFocus);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -80,19 +135,17 @@ export default function AdminDashboard({ user }) {
     setSyncing(false);
     setToast(
       res.ok
-        ? `Synced in ${(d.ms / 1000).toFixed(1)}s · ${d.created} new, ${d.updated} updated`
+        ? `Synced in ${((d.ms || 0) / 1000).toFixed(1)}s · ${d.created} new`
         : d.error || 'Sync failed'
     );
-    if (res.ok) load();
+    if (res.ok) load(true);
   }
 
   async function assign(orderIds, riderId) {
     const who = riderId ? riders.find((r) => r.id === Number(riderId)) : null;
     const ids = new Set(orderIds.map(Number));
-
-    // Update the screen first so the change is instant, then confirm with the
-    // server. Only the touched rows are refreshed - no full page reload.
     const before = orders;
+
     setOrders((cur) =>
       cur.map((o) =>
         ids.has(o.id)
@@ -102,12 +155,11 @@ export default function AdminDashboard({ user }) {
               assignedTo: who ? { id: who.id, name: who.name } : null,
               assignedByName: user.name,
               assignedByRole: 'admin',
-              status:
-                ['pending', 'out_for_delivery', 'rescheduled'].includes(o.status)
-                  ? riderId
-                    ? 'out_for_delivery'
-                    : 'pending'
-                  : o.status,
+              status: ['pending', 'out_for_delivery', 'rescheduled'].includes(o.status)
+                ? riderId
+                  ? 'out_for_delivery'
+                  : 'pending'
+                : o.status,
             }
           : o
       )
@@ -125,22 +177,26 @@ export default function AdminDashboard({ user }) {
 
     if (!res.ok) {
       const d = await res.json();
-      setOrders(before); // put it back if the server refused
+      setOrders(before);
       return setToast(d.error || 'Could not assign');
     }
-
-    refreshStats();
+    load(true);
   }
 
-  // Stats are cheap and can catch up on their own
-  const refreshStats = useCallback(async () => {
-    const sq = new URLSearchParams();
-    if (filters.from) sq.set('from', filters.from);
-    if (filters.to) sq.set('to', filters.to);
-    if (filters.rider) sq.set('rider', filters.rider);
-    const s = await fetch(`/api/stats?${sq}`).then((x) => x.json());
-    setStats(s);
-  }, [filters.from, filters.to, filters.rider]);
+  async function cancelOrder(orderId, cancelReason, cancelNote) {
+    setBusyIds(new Set([orderId]));
+    const res = await fetch('/api/orders/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId, status: 'cancelled', cancelReason, cancelNote }),
+    });
+    setBusyIds(new Set());
+    const d = await res.json();
+    if (!res.ok) return setToast(d.error || 'Could not cancel');
+    setModal(null);
+    setToast('Order cancelled');
+    load(true);
+  }
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -154,21 +210,20 @@ export default function AdminDashboard({ user }) {
     setPicked(next);
   };
 
-  const activeCount = Object.entries(filters).filter(
-    ([k, v]) => v && v !== DEFAULT_FILTERS[k]
-  ).length;
+  const filtersOn = Boolean(range.from || range.to || q);
 
-  const scopeLabel =
-    filters.rider === 'unassigned'
-      ? 'Not assigned'
-      : filters.rider
-        ? riders.find((r) => r.id === Number(filters.rider))?.name || 'Rider'
-        : 'Everyone';
+  const scopeTitle =
+    scope.kind === 'unassigned'
+      ? 'Unassigned orders'
+      : scope.kind === 'rider'
+        ? `${scope.name} · assigned orders`
+        : `${STATUSES[scope.status]?.label || ''} orders`;
 
   return (
     <main className="min-h-dvh bg-white pb-10">
+      {/* ---------------------------------------------------------- nav */}
       <header className="sticky top-0 z-30 bg-brand-600 text-white">
-        <div className="mx-auto flex max-w-[1700px] items-center gap-2 px-3 py-3 md:px-5">
+        <div className="mx-auto flex max-w-[1700px] items-center gap-2 px-3 py-2.5 md:px-5">
           <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-200 text-sm font-bold text-brand-900">
             PA
           </div>
@@ -177,50 +232,76 @@ export default function AdminDashboard({ user }) {
             <div className="text-xs text-brand-100">Delivery control</div>
           </div>
 
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() => setModal({ type: 'newOrder' })}
               className="btn btn-light px-3 py-2 text-sm"
             >
               + Order
             </button>
-            <button onClick={sync} disabled={syncing} className="btn btn-plain bg-brand-700 px-3 py-2 text-sm">
+            <button
+              onClick={sync}
+              disabled={syncing}
+              className="btn btn-light px-3 py-2 text-sm"
+            >
               {syncing && <span className="pk-spinner" />}
               {syncing ? 'Syncing' : 'Sync'}
             </button>
-            <button
-              onClick={() => setModal({ type: 'account' })}
-              className="btn btn-plain px-2.5 py-2 text-sm text-brand-100"
-            >
-              Account
-            </button>
-            {/* Always visible, on every screen size */}
-            <button onClick={logout} className="btn btn-plain px-2.5 py-2 text-sm text-brand-100">
-              Sign out
-            </button>
-          </div>
-        </div>
 
-        <div className="mx-auto flex max-w-[1700px] gap-1 px-3 md:px-5">
-          {[
-            { k: 'orders', l: 'Orders' },
-            { k: 'team', l: 'Delivery boys' },
-          ].map((t) => (
-            <button
-              key={t.k}
-              onClick={() => setView(t.k)}
-              className={`border-b-[3px] px-3 py-2.5 text-sm font-medium ${
-                view === t.k ? 'border-brand-200 text-white' : 'border-transparent text-brand-200'
-              }`}
-            >
-              {t.l}
-            </button>
-          ))}
+            {/* one menu for everything else, collapsed behind the avatar */}
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen((m) => !m)}
+                aria-label="Menu"
+                className="btn grid size-10 place-items-center rounded-full bg-brand-700 text-sm font-bold text-white"
+              >
+                {user.name.slice(0, 2).toUpperCase()}
+              </button>
+
+              {menuOpen && (
+                <div className="absolute right-0 top-12 z-40 w-56 overflow-hidden rounded-xl border border-ink-200 bg-white text-black shadow-2xl">
+                  <div className="border-b border-ink-100 px-4 py-3">
+                    <div className="font-semibold">{user.name}</div>
+                    <div className="text-xs text-ink-500">Admin</div>
+                  </div>
+                  <MenuItem
+                    onClick={() => {
+                      setView('orders');
+                      setMenuOpen(false);
+                    }}
+                    active={view === 'orders'}
+                  >
+                    Orders
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setView('team');
+                      setMenuOpen(false);
+                    }}
+                    active={view === 'team'}
+                  >
+                    Delivery boys
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setModal({ type: 'account' });
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Account
+                  </MenuItem>
+                  <MenuItem onClick={logout} danger>
+                    Sign out
+                  </MenuItem>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-[1700px] space-y-4 p-3 md:p-5">
-        {view === 'team' ? (
+      {view === 'team' ? (
+        <div className="mx-auto max-w-[1700px] p-3 md:p-5">
           <TeamPanel
             team={team}
             onAdd={() => setModal({ type: 'newRider' })}
@@ -228,9 +309,37 @@ export default function AdminDashboard({ user }) {
             onToast={setToast}
             reload={load}
           />
-        ) : (
-          <>
-            {/* ---- Filter bar ---- */}
+        </div>
+      ) : (
+        <>
+          {/* ------------------------------------------- scope tabs */}
+          <div className="sticky top-[57px] z-20 border-b border-ink-200 bg-white">
+            <div className="no-bar mx-auto flex max-w-[1700px] items-center gap-5 overflow-x-auto px-3 md:px-5">
+              <button
+                onClick={() => setScope({ kind: 'unassigned' })}
+                className={`tab ${scope.kind === 'unassigned' ? 'tab-on' : ''}`}
+              >
+                Unassigned
+                <span className="ml-1 tabular-nums">({stats?.unassigned ?? 0})</span>
+              </button>
+
+              {(stats?.riderStats || []).map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setScope({ kind: 'rider', id: r.id, name: r.name })}
+                  className={`tab ${
+                    scope.kind === 'rider' && scope.id === r.id ? 'tab-on' : ''
+                  }`}
+                >
+                  {r.name}
+                  <span className="ml-1 tabular-nums">({r.assigned})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mx-auto max-w-[1700px] space-y-4 p-3 md:p-5">
+            {/* -------------------------------------- optional filters */}
             <section className="rounded-2xl border border-ink-200 bg-white shadow-sm">
               <div className="flex flex-wrap items-center gap-2 p-3">
                 <input
@@ -242,110 +351,94 @@ export default function AdminDashboard({ user }) {
                 <button
                   onClick={() => setShowFilters((s) => !s)}
                   className={`btn px-3.5 py-2.5 text-sm ${
-                    showFilters || activeCount ? 'btn-blue' : 'btn-ghost'
+                    showFilters || range.from || range.to ? 'btn-blue' : 'btn-ghost'
                   }`}
                 >
-                  Filters{activeCount ? ` · ${activeCount}` : ''}
+                  Date filter{range.from || range.to ? ' · on' : ''}
                 </button>
-                {activeCount > 0 && (
+                {filtersOn && (
                   <button
-                    onClick={() => setFilters(DEFAULT_FILTERS)}
+                    onClick={() => {
+                      setRange({ from: '', to: '' });
+                      setTypedQ('');
+                    }}
                     className="btn btn-ghost px-3 py-2.5 text-sm"
                   >
-                    Reset
+                    Clear
                   </button>
                 )}
               </div>
 
-              {/* Quick scope chips - always visible, the thing used most */}
-              <div className="no-bar flex gap-2 overflow-x-auto border-t border-ink-100 px-3 py-2.5">
-                <ScopeChip
-                  on={filters.rider === 'unassigned'}
-                  onClick={() => setFilters({ ...filters, rider: 'unassigned' })}
-                  count={stats?.unassigned}
-                >
-                  Not assigned
-                </ScopeChip>
-                <ScopeChip
-                  on={filters.rider === ''}
-                  onClick={() => setFilters({ ...filters, rider: '' })}
-                >
-                  Everyone
-                </ScopeChip>
-                {riders.map((r) => (
-                  <ScopeChip
-                    key={r.id}
-                    on={filters.rider === String(r.id)}
-                    onClick={() => setFilters({ ...filters, rider: String(r.id) })}
-                  >
-                    {r.name}
-                  </ScopeChip>
-                ))}
-              </div>
-
               {showFilters && (
-                <div className="space-y-3 border-t border-ink-100 p-3">
-                  <div>
-                    <span className="text-xs font-semibold text-ink-600">Date</span>
-                    <div className="mt-1.5">
-                      <DateRange
-                        value={{ from: filters.from, to: filters.to }}
-                        onChange={(r) => setFilters({ ...filters, ...r })}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <span className="text-xs font-semibold text-ink-600">Status</span>
-                    <div className="mt-1.5 flex flex-wrap gap-2">
-                      <ScopeChip
-                        on={filters.status === ''}
-                        onClick={() => setFilters({ ...filters, status: '' })}
-                      >
-                        Any
-                      </ScopeChip>
-                      {Object.entries(STATUSES).map(([k, v]) => (
-                        <ScopeChip
-                          key={k}
-                          on={filters.status === k}
-                          onClick={() => setFilters({ ...filters, status: k })}
-                        >
-                          {v.label}
-                        </ScopeChip>
-                      ))}
-                    </div>
-                  </div>
+                <div className="border-t border-ink-100 p-3">
+                  <DateRange value={range} onChange={setRange} />
+                  <p className="mt-2 text-xs text-ink-500">
+                    Leave this off to see everything. When a date is chosen, the counts and
+                    the rider table below follow it too.
+                  </p>
                 </div>
               )}
             </section>
 
-            {/* ---- Stats, following the same filters ---- */}
+            {/* -------------------------------------- clickable counts */}
             {stats && (
-              <>
-                <p className="text-sm text-ink-500">
-                  Showing <b className="text-black">{scopeLabel}</b>
-                  {filters.from || filters.to ? ' for the chosen dates' : ' · all dates'}
-                </p>
-                <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-                  <Stat label="Total" value={stats.total} />
-                  <Stat label="Not assigned" value={stats.unassigned} tone="brand" />
-                  <Stat label="Assigned" value={stats.counts.out_for_delivery} tone="brand" />
-                  <Stat label="Pending" value={stats.counts.rescheduled} tone="warn" />
-                  <Stat label="Delivered" value={stats.counts.delivered} tone="good" />
-                  <Stat label="Cancelled" value={stats.counts.cancelled} tone="stop" />
-                </section>
-              </>
+              <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                <StatButton
+                  label="Total"
+                  value={stats.total}
+                  on={scope.kind === 'status' && scope.status === 'all'}
+                  onClick={() => setScope({ kind: 'status', status: 'all' })}
+                />
+                <StatButton
+                  label="Not assigned"
+                  value={stats.unassigned}
+                  tone="brand"
+                  on={scope.kind === 'unassigned'}
+                  onClick={() => setScope({ kind: 'unassigned' })}
+                />
+                <StatButton
+                  label="Assigned"
+                  value={stats.counts.out_for_delivery}
+                  tone="brand"
+                  on={scope.kind === 'status' && scope.status === 'out_for_delivery'}
+                  onClick={() => setScope({ kind: 'status', status: 'out_for_delivery' })}
+                />
+                <StatButton
+                  label="Pending"
+                  value={stats.counts.rescheduled}
+                  tone="warn"
+                  on={scope.kind === 'status' && scope.status === 'rescheduled'}
+                  onClick={() => setScope({ kind: 'status', status: 'rescheduled' })}
+                />
+                <StatButton
+                  label="Delivered"
+                  value={stats.counts.delivered}
+                  tone="good"
+                  on={scope.kind === 'status' && scope.status === 'delivered'}
+                  onClick={() => setScope({ kind: 'status', status: 'delivered' })}
+                />
+                <StatButton
+                  label="Cancelled"
+                  value={stats.counts.cancelled}
+                  tone="stop"
+                  on={scope.kind === 'status' && scope.status === 'cancelled'}
+                  onClick={() => setScope({ kind: 'status', status: 'cancelled' })}
+                />
+              </section>
             )}
 
+            {/* -------------------------------------- rider table */}
             {stats?.riderStats?.length > 0 && (
               <section className="overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-sm">
-                <table className="w-full min-w-[560px] text-sm">
+                <table className="w-full min-w-[600px] text-sm">
                   <thead className="border-b border-ink-100 bg-ink-50 text-left text-ink-500">
                     <tr>
                       <th className="px-4 py-2.5 font-medium">Delivery boy</th>
                       <th className="px-3 py-2.5 text-right font-medium">Total</th>
                       <th className="px-3 py-2.5 text-right font-medium">Assigned</th>
-                      <th className="px-3 py-2.5 text-right font-medium">Pending</th>
+                      <th className="bg-warn-50 px-3 py-2.5 text-right font-semibold text-warn-900">
+                        Pending
+                      </th>
                       <th className="px-3 py-2.5 text-right font-medium">Delivered</th>
                       <th className="px-3 py-2.5 text-right font-medium">Cancelled</th>
                     </tr>
@@ -354,15 +447,21 @@ export default function AdminDashboard({ user }) {
                     {stats.riderStats.map((r) => (
                       <tr
                         key={r.id}
-                        onClick={() => setFilters({ ...filters, rider: String(r.id) })}
+                        onClick={() => setScope({ kind: 'rider', id: r.id, name: r.name })}
                         className="cursor-pointer hover:bg-brand-50"
                       >
                         <td className="px-4 py-2.5 font-semibold text-black">{r.name}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{r.assigned}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-brand-700">
-                          {r.toDeliver}
+                        <td className="px-3 py-2.5 text-right tabular-nums">{r.total}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-brand-700">
+                          {r.assigned}
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-warn-600">
+                        <td
+                          className={`px-3 py-2.5 text-right font-bold tabular-nums ${
+                            r.rescheduled > 0
+                              ? 'bg-warn-100 text-warn-900'
+                              : 'bg-warn-50 text-ink-400'
+                          }`}
+                        >
                           {r.rescheduled}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums text-good-600">
@@ -378,8 +477,15 @@ export default function AdminDashboard({ user }) {
               </section>
             )}
 
+            {/* -------------------------------------- order list */}
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-black">{scopeTitle}</h2>
+              <span className="text-sm text-ink-500 tabular-nums">{orders.length}</span>
+              {loading && <span className="pk-spinner text-ink-400" />}
+            </div>
+
             {picked.size > 0 && (
-              <div className="sticky top-[112px] z-20 flex flex-wrap items-center gap-2 rounded-xl bg-brand-800 px-3 py-2.5 text-white shadow-lg">
+              <div className="sticky top-[100px] z-20 flex flex-wrap items-center gap-2 rounded-xl bg-brand-800 px-3 py-2.5 text-white shadow-lg">
                 <span className="text-sm font-medium tabular-nums">{picked.size} selected</span>
                 <select
                   defaultValue=""
@@ -408,41 +514,31 @@ export default function AdminDashboard({ user }) {
               </div>
             )}
 
-            {loading && <p className="py-16 text-center text-ink-400">Loading orders…</p>}
-
             {!loading && orders.length === 0 && (
-              <div className="py-16 text-center">
-                <p className="text-ink-500">Nothing here with these filters.</p>
-                <button
-                  onClick={() => setFilters(DEFAULT_FILTERS)}
-                  className="btn btn-ghost mt-3 px-4 py-2 text-sm"
-                >
-                  Reset filters
-                </button>
-              </div>
+              <p className="py-14 text-center text-ink-500">Nothing here right now.</p>
             )}
 
             {/* Mobile cards */}
             <div className="space-y-3 md:hidden">
-              {!loading &&
-                orders.map((o) => (
-                  <AdminOrderCard
-                    key={o.id}
-                    order={o}
-                    riders={riders}
-                    picked={picked.has(o.id)}
-                    busy={busyIds.has(o.id)}
-                    flash={flashIds.has(o.id)}
-                    onToggle={() => toggle(o.id)}
-                    onAssign={(rid) => assign([o.id], rid)}
-                  />
-                ))}
+              {orders.map((o) => (
+                <AdminOrderCard
+                  key={o.id}
+                  order={o}
+                  riders={riders}
+                  picked={picked.has(o.id)}
+                  busy={busyIds.has(o.id)}
+                  flash={flashIds.has(o.id)}
+                  onToggle={() => toggle(o.id)}
+                  onAssign={(rid) => assign([o.id], rid)}
+                  onCancel={() => setModal({ type: 'cancel', order: o })}
+                />
+              ))}
             </div>
 
             {/* Desktop table */}
-            {!loading && orders.length > 0 && (
+            {orders.length > 0 && (
               <section className="hidden overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-sm md:block">
-                <table className="w-full min-w-[1200px] text-sm">
+                <table className="w-full min-w-[1250px] text-sm">
                   <thead className="border-b border-ink-100 bg-ink-50 text-left text-ink-500">
                     <tr>
                       <th className="w-10 px-3 py-2.5">
@@ -464,11 +560,13 @@ export default function AdminDashboard({ user }) {
                       <th className="px-3 py-2.5 text-right font-medium">Total</th>
                       <th className="px-3 py-2.5 font-medium">Status</th>
                       <th className="px-3 py-2.5 font-medium">Delivery boy</th>
+                      <th className="px-3 py-2.5 font-medium"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink-100">
                     {orders.map((o) => {
                       const un = !o.assignedToId;
+                      const done = o.status === 'delivered' || o.status === 'cancelled';
                       return (
                         <tr
                           key={o.id}
@@ -512,7 +610,7 @@ export default function AdminDashboard({ user }) {
                             )}
                             <div className="max-w-[220px] text-xs text-ink-500">{o.address}</div>
                           </td>
-                          <td className="max-w-[240px] px-3 py-3 align-top">
+                          <td className="max-w-[230px] px-3 py-3 align-top">
                             {(o.products || []).map((p, i) => (
                               <div key={i} className="flex items-center gap-1.5">
                                 <span className="font-medium text-black">{p.name}</span>
@@ -555,6 +653,16 @@ export default function AdminDashboard({ user }) {
                               </div>
                             )}
                           </td>
+                          <td className="px-3 py-3 align-top">
+                            {!done && (
+                              <button
+                                onClick={() => setModal({ type: 'cancel', order: o })}
+                                className="btn btn-ghost px-2.5 py-1.5 text-xs text-stop-600"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -562,10 +670,11 @@ export default function AdminDashboard({ user }) {
                 </table>
               </section>
             )}
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
 
+      {/* ------------------------------------------------------- modals */}
       {modal?.type === 'newOrder' && (
         <Modal title="New order" onClose={() => setModal(null)}>
           <NewOrderForm
@@ -573,8 +682,17 @@ export default function AdminDashboard({ user }) {
             onDone={(msg) => {
               setModal(null);
               setToast(msg);
-              load();
+              load(true);
             }}
+          />
+        </Modal>
+      )}
+      {modal?.type === 'cancel' && (
+        <Modal title="Cancel this order" onClose={() => setModal(null)}>
+          <CancelForm
+            order={modal.order}
+            onConfirm={(reason, note) => cancelOrder(modal.order.id, reason, note)}
+            onClose={() => setModal(null)}
           />
         </Modal>
       )}
@@ -594,7 +712,7 @@ export default function AdminDashboard({ user }) {
             onDone={(msg) => {
               setModal(null);
               setToast(msg);
-              load();
+              load(true);
             }}
           />
         </Modal>
@@ -606,7 +724,7 @@ export default function AdminDashboard({ user }) {
             onDone={(msg) => {
               setModal(null);
               setToast(msg);
-              load();
+              load(true);
             }}
           />
         </Modal>
@@ -623,25 +741,20 @@ export default function AdminDashboard({ user }) {
 
 /* ------------------------------------------------------------------ pieces */
 
-function ScopeChip({ on, onClick, count, children }) {
+function MenuItem({ children, onClick, active, danger }) {
   return (
     <button
       onClick={onClick}
-      className={`btn shrink-0 px-3.5 py-2 text-sm ${
-        on ? 'btn-blue' : 'bg-brand-50 text-brand-800 ring-1 ring-brand-200'
+      className={`block w-full px-4 py-3 text-left text-sm font-medium hover:bg-brand-50 ${
+        danger ? 'text-stop-600' : active ? 'bg-brand-50 text-brand-700' : 'text-black'
       }`}
     >
       {children}
-      {typeof count === 'number' && (
-        <span className={`tabular-nums ${on ? 'text-brand-100' : 'text-brand-600'}`}>
-          {count}
-        </span>
-      )}
     </button>
   );
 }
 
-function Stat({ label, value, tone }) {
+function StatButton({ label, value, tone, on, onClick }) {
   const tones = {
     brand: 'text-brand-600',
     good: 'text-good-600',
@@ -649,12 +762,17 @@ function Stat({ label, value, tone }) {
     warn: 'text-warn-600',
   };
   return (
-    <div className="rounded-xl border border-ink-200 bg-white px-3 py-2.5 shadow-sm">
-      <div className="text-xs text-ink-500">{label}</div>
-      <div className={`text-2xl font-bold tabular-nums ${tones[tone] || 'text-black'}`}>
+    <button
+      onClick={onClick}
+      className={`btn flex-col items-start rounded-xl border px-3 py-2.5 text-left shadow-sm ${
+        on ? 'border-brand-600 bg-brand-50 ring-2 ring-brand-200' : 'border-ink-200 bg-white'
+      }`}
+    >
+      <span className="text-xs font-medium text-ink-500">{label}</span>
+      <span className={`text-2xl font-bold tabular-nums ${tones[tone] || 'text-black'}`}>
         {value}
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -694,8 +812,9 @@ function StatusDetail({ order: o }) {
   return null;
 }
 
-function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAssign }) {
+function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAssign, onCancel }) {
   const un = !o.assignedToId;
+  const done = o.status === 'delivered' || o.status === 'cancelled';
 
   return (
     <article
@@ -727,10 +846,7 @@ function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAss
           <PincodeBadge pincode={o.pincode} />
         </div>
 
-        <div className="flex items-center gap-2">
-          <StatusChip status={o.status} />
-        </div>
-
+        <StatusChip status={o.status} />
         <p className="text-sm text-ink-600">{o.address}</p>
 
         <ul className="rounded-lg bg-ink-50 px-2.5 py-1.5">
@@ -769,8 +885,70 @@ function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAss
             {o.assignedByRole === 'admin' ? ' (admin)' : ' (rider)'}
           </p>
         )}
+
+        {!done && (
+          <button onClick={onCancel} className="btn btn-ghost w-full py-2.5 text-sm text-stop-600">
+            Cancel order
+          </button>
+        )}
       </div>
     </article>
+  );
+}
+
+function CancelForm({ order, onConfirm, onClose }) {
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const needsNote = reason === 'Other';
+  const canSend = reason && (!needsNote || note.trim());
+
+  return (
+    <div className="mt-3">
+      <p className="text-sm text-ink-500">
+        {order.customerName} · {order.orderNumber}
+      </p>
+
+      <div className="mt-4 space-y-2">
+        {CANCEL_REASONS.map((r) => (
+          <label
+            key={r}
+            className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 ${
+              reason === r ? 'border-stop-500 bg-stop-50' : 'border-ink-200'
+            }`}
+          >
+            <input
+              type="radio"
+              name="areason"
+              checked={reason === r}
+              onChange={() => setReason(r)}
+              className="size-4"
+            />
+            <span className="text-black">{r}</span>
+          </label>
+        ))}
+      </div>
+
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={2}
+        placeholder={needsNote ? 'Type the reason' : 'Anything to add? (optional)'}
+        className="mt-3 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-brand-600"
+      />
+
+      <div className="mt-4 flex gap-2">
+        <button onClick={onClose} className="btn btn-ghost flex-1 py-3.5">
+          Go back
+        </button>
+        <button
+          onClick={() => onConfirm(reason, note.trim())}
+          disabled={!canSend}
+          className="btn btn-red flex-1 py-3.5"
+        >
+          Cancel order
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -820,11 +998,9 @@ function TeamPanel({ team, onAdd, onEdit, onToast, reload }) {
                 </div>
               </div>
             </div>
-
             <p className="mt-2 text-xs text-ink-400">
               Signs in with {r.phone} · {r.active ? 'active' : 'turned off'}
             </p>
-
             <div className="mt-3 flex gap-2">
               <button onClick={() => onEdit(r)} className="btn btn-ghost flex-1 py-2 text-sm">
                 Edit
@@ -1037,9 +1213,7 @@ function NewOrderForm({ riders, onDone }) {
           onChange={(e) => setF({ ...f, pincode: e.target.value })}
         />
         {String(f.pincode).replace(/\D/g, '').length >= 6 && (
-          <p
-            className={`mt-1 text-sm font-semibold ${area ? 'text-good-600' : 'text-warn-600'}`}
-          >
+          <p className={`mt-1 text-sm font-semibold ${area ? 'text-good-600' : 'text-warn-600'}`}>
             {area || 'No area name saved for this pincode yet'}
           </p>
         )}
@@ -1107,11 +1281,7 @@ function NewOrderForm({ riders, onDone }) {
 
       {err && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-600">{err}</p>}
 
-      <button
-        onClick={submit}
-        disabled={busy || !phoneOk}
-        className="btn btn-blue w-full py-3.5"
-      >
+      <button onClick={submit} disabled={busy || !phoneOk} className="btn btn-blue w-full py-3.5">
         {busy && <span className="pk-spinner" />}
         {busy ? 'Creating' : 'Create order'}
       </button>

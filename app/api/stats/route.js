@@ -13,7 +13,6 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const from = searchParams.get('from');
   const to = searchParams.get('to');
-  const rider = searchParams.get('rider');
 
   const cutoff = new Date(`${ORDER_CUTOFF}T00:00:00`);
   const range = { gte: cutoff };
@@ -27,16 +26,14 @@ export async function GET(req) {
     range.lte = end;
   }
 
-  // Stats use the same date window as the table, and narrow by rider too, so
-  // the whole page reads as one consistent view of the same filter.
-  const base = { orderDate: range };
-  const where = { ...base };
-  if (rider === 'unassigned') where.assignedToId = null;
-  else if (rider) where.assignedToId = Number(rider);
+  // Stats deliberately ignore which rider or status is being viewed. They are
+  // the whole picture for the chosen dates, so the numbers never go to zero
+  // just because the list below is narrowed down.
+  const where = { orderDate: range };
 
-  const [byStatus, unassigned, total, riders, perRider, byArea, byPayment] = await Promise.all([
+  const [byStatus, unassigned, total, riders, perRider, byPayment] = await Promise.all([
     prisma.order.groupBy({ by: ['status'], where, _count: { _all: true } }),
-    prisma.order.count({ where: { ...base, assignedToId: null } }),
+    prisma.order.count({ where: { ...where, assignedToId: null } }),
     prisma.order.count({ where }),
     prisma.user.findMany({
       where: { role: 'delivery', active: true },
@@ -45,15 +42,8 @@ export async function GET(req) {
     }),
     prisma.order.groupBy({
       by: ['assignedToId', 'status'],
-      where: { ...base, assignedToId: { not: null } },
+      where: { ...where, assignedToId: { not: null } },
       _count: { _all: true },
-    }),
-    prisma.order.groupBy({
-      by: ['pincode'],
-      where,
-      _count: { _all: true },
-      orderBy: { _count: { pincode: 'desc' } },
-      take: 12,
     }),
     prisma.order.groupBy({
       by: ['paymentMode'],
@@ -84,17 +74,14 @@ export async function GET(req) {
     return {
       id: r.id,
       name: r.name,
-      assigned: rows.reduce((sum, x) => sum + x._count._all, 0),
-      toDeliver: get('out_for_delivery'),
+      total: rows.reduce((sum, x) => sum + x._count._all, 0),
+      // "assigned" means still carrying it - not delivered, pending or cancelled
+      assigned: get('out_for_delivery'),
       rescheduled: get('rescheduled'),
       delivered: get('delivered'),
       cancelled: get('cancelled'),
     };
   });
 
-  const areas = byArea
-    .filter((a) => a.pincode)
-    .map((a) => ({ pincode: a.pincode, count: a._count._all }));
-
-  return NextResponse.json({ total, unassigned, counts, payments, riderStats, areas });
+  return NextResponse.json({ total, unassigned, counts, payments, riderStats });
 }
