@@ -13,7 +13,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const from = searchParams.get('from');
   const to = searchParams.get('to');
-  const rider = searchParams.get('rider'); // a rider id narrows every count
+  const rider = searchParams.get('rider');
 
   const cutoff = new Date(`${ORDER_CUTOFF}T00:00:00`);
   const range = { gte: cutoff };
@@ -29,12 +29,13 @@ export async function GET(req) {
 
   const base = { orderDate: range };
 
-  // With a rider id the six counts describe that one person. Without it they
-  // describe the whole business, so they never read zero just because the
-  // list below is narrowed.
+  // `scoped` narrows to one rider when asked - it drives the six count
+  // buttons. `base` stays global and drives the tab strip, so the
+  // "Not assigned" tab always shows the real number of loose orders no
+  // matter which rider is being looked at.
   const scoped = rider ? { ...base, assignedToId: Number(rider) } : base;
 
-  const [byStatus, unassigned, total, riders, perRider, byPayment] = await Promise.all([
+  const [byStatus, unassignedGlobal, total, riders, perRider, byPayment] = await Promise.all([
     prisma.order.groupBy({ by: ['status'], where: scoped, _count: { _all: true } }),
     prisma.order.count({ where: { ...base, assignedToId: null } }),
     prisma.order.count({ where: scoped }),
@@ -87,10 +88,11 @@ export async function GET(req) {
 
   return NextResponse.json({
     total,
-    unassigned: rider ? counts.pending : unassigned,
     counts,
     payments,
     riderStats,
+    // always global - used by the tab strip
+    unassigned: unassignedGlobal,
     scopedToRider: Boolean(rider),
   });
 }

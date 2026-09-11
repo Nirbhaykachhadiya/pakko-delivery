@@ -32,21 +32,93 @@ export default function DeliveryDashboard({ user }) {
   const [sheet, setSheet] = useState(null);
   const [toast, setToast] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [newCount, setNewCount] = useState(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [o, u] = await Promise.all([
-      fetch('/api/orders').then((r) => r.json()),
-      fetch('/api/users').then((r) => r.json()),
-    ]);
-    setOrders(o.orders || []);
-    setRiders((u.riders || []).filter((r) => r.id !== user.id));
-    setLoading(false);
-  }, [user.id]);
+  const sigRef = useRef(null);
+  const idsRef = useRef(new Set());
+  const pausedRef = useRef(false);
+
+  const load = useCallback(
+    async (quiet = false) => {
+      if (!quiet) setLoading(true);
+      const [o, u] = await Promise.all([
+        fetch('/api/orders').then((r) => r.json()),
+        fetch('/api/users').then((r) => r.json()),
+      ]);
+      const list = o.orders || [];
+
+      // Anything newly landed in "Assigned" that this rider has not seen yet
+      const liveIds = new Set(
+        list.filter((x) => x.status === 'out_for_delivery').map((x) => x.id)
+      );
+      if (idsRef.current.size) {
+        const fresh = [...liveIds].filter((id) => !idsRef.current.has(id)).length;
+        if (fresh > 0 && quiet) {
+          setNewCount((n) => n + fresh);
+          try {
+            navigator.vibrate?.([120, 60, 120]);
+          } catch {}
+        }
+      }
+      idsRef.current = liveIds;
+
+      setOrders(list);
+      setRiders((u.riders || []).filter((r) => r.id !== user.id));
+      if (!quiet) setLoading(false);
+    },
+    [user.id]
+  );
+
+  // Ask the server only for a tiny fingerprint. The full list is fetched
+  // just when that fingerprint changes, so checking often stays cheap.
+  const checkForChanges = useCallback(async () => {
+    if (pausedRef.current) return;
+    try {
+      const v = await fetch('/api/orders/version').then((r) => r.json());
+      const sig = `${v.count}:${v.latest}`;
+      if (sigRef.current === null) {
+        sigRef.current = sig;
+        return;
+      }
+      if (sig !== sigRef.current) {
+        sigRef.current = sig;
+        await load(true);
+      }
+    } catch {
+      // offline or a dropped signal - try again on the next tick
+    }
+  }, [load]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Poll while the app is actually on screen; stop the moment it is not,
+  // and catch up instantly when the rider looks at it again.
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (document.visibilityState === 'visible') checkForChanges();
+    }, 20000);
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkForChanges();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    window.addEventListener('online', onVisible);
+
+    return () => {
+      clearInterval(tick);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.removeEventListener('online', onVisible);
+    };
+  }, [checkForChanges]);
+
+  // While a sheet is open the rider is mid-task, so hold refreshes back
+  useEffect(() => {
+    pausedRef.current = Boolean(sheet);
+  }, [sheet]);
 
   useEffect(() => {
     if (!toast) return;
@@ -100,6 +172,7 @@ export default function DeliveryDashboard({ user }) {
       setOrders(before);
       setToast(err.error || 'Could not save - try again');
     }
+    sigRef.current = null;
   }
 
   async function handover(orderId, riderId, riderName) {
@@ -119,6 +192,7 @@ export default function DeliveryDashboard({ user }) {
       setOrders(before);
       setToast(err.error || 'Could not pass it on');
     }
+    sigRef.current = null;
   }
 
   async function logout() {
@@ -154,6 +228,13 @@ export default function DeliveryDashboard({ user }) {
     return c;
   }, [orders, range]);
 
+  useEffect(() => {
+    if (tab === 'todo' && newCount > 0) {
+      const t = setTimeout(() => setNewCount(0), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [tab, newCount]);
+
   const shown = orders
     .filter((o) => inTab(o, tab) && inRange(o, tab))
     .sort((a, b) =>
@@ -173,20 +254,12 @@ export default function DeliveryDashboard({ user }) {
             <div className="truncate font-semibold">{user.name}</div>
             <div className="text-xs text-brand-100">{shown.length} orders showing</div>
           </div>
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              onClick={() => setSheet({ mode: 'account' })}
-              className="btn btn-plain px-2.5 py-2 text-sm text-brand-100"
-            >
-              Account
-            </button>
-            <button
-              onClick={logout}
-              className="btn btn-plain px-2.5 py-2 text-sm text-brand-100"
-            >
-              Sign out
-            </button>
-          </div>
+          <button
+            onClick={logout}
+            className="btn btn-plain ml-auto px-2.5 py-2 text-sm text-brand-100"
+          >
+            Sign out
+          </button>
         </div>
 
         <div className="px-4 pb-3">
@@ -210,6 +283,19 @@ export default function DeliveryDashboard({ user }) {
           ))}
         </div>
       </header>
+
+      {newCount > 0 && (
+        <button
+          onClick={() => {
+            setNewCount(0);
+            setTab('todo');
+            setRange({ from: '', to: '' });
+          }}
+          className="btn btn-light sticky top-[150px] z-20 mx-3 mt-3 w-[calc(100%-1.5rem)] py-3 shadow-lg"
+        >
+          {newCount} new {newCount === 1 ? 'order' : 'orders'} for you · tap to see
+        </button>
+      )}
 
       <div className="space-y-3 p-3">
         {loading && <p className="py-16 text-center text-ink-400">Loading…</p>}
@@ -281,9 +367,6 @@ export default function DeliveryDashboard({ user }) {
           onClose={() => setSheet(null)}
           onConfirm={(id, name) => handover(sheet.order.id, id, name)}
         />
-      )}
-      {sheet?.mode === 'account' && (
-        <AccountSheet user={user} onClose={() => setSheet(null)} onDone={setToast} />
       )}
 
       {toast && (
@@ -663,79 +746,6 @@ function GiveSheet({ order, riders, onClose, onConfirm }) {
       <button onClick={onClose} className="btn btn-ghost mt-5 w-full py-3.5">
         Go back
       </button>
-    </Sheet>
-  );
-}
-
-function AccountSheet({ user, onClose, onDone }) {
-  const [currentPassword, setCurrent] = useState('');
-  const [newPhone, setPhone] = useState('');
-  const [newPassword, setPass] = useState('');
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    setBusy(true);
-    setErr('');
-    const res = await fetch('/api/auth/account', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword, newPhone, newPassword }),
-    });
-    const d = await res.json();
-    setBusy(false);
-    if (!res.ok) return setErr(d.error || 'Could not save');
-    onClose();
-    onDone('Account updated');
-  }
-
-  const field =
-    'mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-brand-600';
-
-  return (
-    <Sheet title="My account" subtitle={user.name} onClose={onClose}>
-      <div className="mt-4 space-y-3">
-        <label className="block">
-          <span className="text-sm font-medium text-ink-700">Current password</span>
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={(e) => setCurrent(e.target.value)}
-            className={field}
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm font-medium text-ink-700">New phone number (optional)</span>
-          <input
-            inputMode="numeric"
-            value={newPhone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="Leave blank to keep the same"
-            className={field}
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm font-medium text-ink-700">New password (optional)</span>
-          <input
-            type="password"
-            value={newPassword}
-            onChange={(e) => setPass(e.target.value)}
-            placeholder="Leave blank to keep the same"
-            className={field}
-          />
-        </label>
-
-        {err && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-600">{err}</p>}
-
-        <button
-          onClick={save}
-          disabled={busy || !currentPassword}
-          className="btn btn-blue w-full py-3.5"
-        >
-          {busy && <span className="pk-spinner" />}
-          {busy ? 'Saving' : 'Save changes'}
-        </button>
-      </div>
     </Sheet>
   );
 }

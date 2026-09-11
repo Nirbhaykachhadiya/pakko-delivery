@@ -78,7 +78,7 @@ export default function AdminDashboard({ user }) {
 
     if (onRider) {
       p.set('rider', String(who));
-      if (statusPick === null) p.set('status', 'out_for_delivery');
+      if (statusPick === null || statusPick === 'pending') p.set('status', 'out_for_delivery');
       else if (statusPick !== 'all') p.set('status', statusPick);
     } else if (statusPick === null || statusPick === 'pending') {
       p.set('rider', 'unassigned');
@@ -145,7 +145,9 @@ export default function AdminDashboard({ user }) {
 
   function pickWho(next) {
     setWho(next);
-    setStatusPick(null);
+    // A rider's list starts on what they are carrying right now.
+    // "Not assigned" is meaningless for a rider, so it never applies there.
+    setStatusPick(next === 'unassigned' ? null : 'out_for_delivery');
     setPicked(new Set());
   }
 
@@ -231,7 +233,7 @@ export default function AdminDashboard({ user }) {
   };
 
   const listTitle = onRider
-    ? statusPick === null
+    ? statusPick === null || statusPick === 'out_for_delivery'
       ? `${riderName} · assigned orders`
       : `${riderName} · ${statusPick === 'all' ? 'all orders' : STATUSES[statusPick]?.label}`
     : statusPick === null || statusPick === 'pending'
@@ -402,25 +404,37 @@ export default function AdminDashboard({ user }) {
                     These numbers are <b className="text-black">{riderName}</b> only
                   </p>
                 )}
-                <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                <section
+                  className={`grid grid-cols-2 gap-2.5 sm:grid-cols-3 ${
+                    onRider ? 'lg:grid-cols-5' : 'lg:grid-cols-6'
+                  }`}
+                >
                   <StatButton
                     label="Total"
                     value={stats.total}
                     on={statusPick === 'all'}
                     onClick={() => setStatusPick('all')}
                   />
-                  <StatButton
-                    label="Not assigned"
-                    value={onRider ? stats.counts.pending : stats.unassigned}
-                    tone="brand"
-                    on={statusPick === null || statusPick === 'pending'}
-                    onClick={() => setStatusPick('pending')}
-                  />
+
+                  {/* Only meaningful when looking at loose orders */}
+                  {!onRider && (
+                    <StatButton
+                      label="Not assigned"
+                      value={stats.unassigned}
+                      tone="brand"
+                      on={statusPick === null || statusPick === 'pending'}
+                      onClick={() => setStatusPick('pending')}
+                    />
+                  )}
+
                   <StatButton
                     label="Assigned"
                     value={stats.counts.out_for_delivery}
                     tone="brand"
-                    on={statusPick === 'out_for_delivery'}
+                    on={
+                      statusPick === 'out_for_delivery' ||
+                      (onRider && statusPick === null)
+                    }
                     onClick={() => setStatusPick('out_for_delivery')}
                   />
                   <StatButton
