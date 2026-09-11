@@ -27,6 +27,12 @@ const SELECT = {
   totalPrice: true,
   orderDate: true,
   status: true,
+  isUrgent: true,
+  urgentNote: true,
+  voiceNote: true,
+  voiceNoteSec: true,
+  urgentAt: true,
+  urgentBy: true,
   assignedToId: true,
   assignedAt: true,
   assignedByName: true,
@@ -96,7 +102,8 @@ export async function GET(req) {
 
   const orders = await prisma.order.findMany({
     where,
-    orderBy: [{ source: 'asc' }, { orderDate: 'desc' }],
+    // urgent first, then hand-typed orders, then newest
+    orderBy: [{ isUrgent: 'desc' }, { source: 'asc' }, { orderDate: 'desc' }],
     take,
     select: SELECT,
   });

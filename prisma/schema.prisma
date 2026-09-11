@@ -49,6 +49,14 @@ model Order {
   // pending | out_for_delivery | rescheduled | delivered | cancelled
   status String @default("pending")
 
+  // Urgent flag with an optional typed message and a short voice note
+  isUrgent     Boolean   @default(false)
+  urgentNote   String?
+  voiceNote    String?   @db.Text
+  voiceNoteSec Int?
+  urgentAt     DateTime?
+  urgentBy     String?
+
   deliveredAt DateTime?
   paymentMode String? // "cash" | "online"
 
@@ -69,6 +77,7 @@ model Order {
   @@index([orderDate])
   @@index([pincode])
   @@index([source])
+  @@index([isUrgent])
   // matches the query the dashboards actually run most
   @@index([orderDate, assignedToId])
   @@index([assignedToId, status])

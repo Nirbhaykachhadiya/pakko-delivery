@@ -13,6 +13,7 @@ import {
 import { areaFor } from '@/lib/pincodes';
 import PincodeBadge from '@/components/PincodeBadge';
 import DateRange from '@/components/DateRange';
+import { VoiceRecorder } from '@/components/VoiceNote';
 
 const REFRESH_MS = 25000;
 
@@ -217,6 +218,19 @@ export default function AdminDashboard({ user }) {
     if (!res.ok) return setToast(d.error || 'Could not cancel');
     setModal(null);
     setToast('Order cancelled');
+    load(true);
+  }
+
+  async function saveUrgent(orderId, payload) {
+    const res = await fetch('/api/orders/urgent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId, ...payload }),
+    });
+    const d = await res.json();
+    if (!res.ok) return setToast(d.error || 'Could not save');
+    setModal(null);
+    setToast(payload.isUrgent ? 'Marked urgent' : 'Urgent removed');
     load(true);
   }
 
@@ -565,6 +579,7 @@ export default function AdminDashboard({ user }) {
                   onToggle={() => toggle(o.id)}
                   onAssign={(rid) => assign([o.id], rid)}
                   onCancel={() => setModal({ type: 'cancel', order: o })}
+                  onUrgent={() => setModal({ type: 'urgent', order: o })}
                 />
               ))}
             </div>
@@ -603,9 +618,13 @@ export default function AdminDashboard({ user }) {
                       return (
                         <tr
                           key={o.id}
-                          className={`${un ? 'bg-brand-50/60' : 'hover:bg-ink-50'} ${
-                            flashIds.has(o.id) ? 'pk-flash' : ''
-                          }`}
+                          className={`${
+                            o.isUrgent
+                              ? 'bg-stop-50'
+                              : un
+                                ? 'bg-brand-50/60'
+                                : 'hover:bg-ink-50'
+                          } ${flashIds.has(o.id) ? 'pk-flash' : ''}`}
                         >
                           <td className="px-3 py-3 align-top">
                             <input
@@ -620,6 +639,11 @@ export default function AdminDashboard({ user }) {
                               <span className="font-mono text-base font-bold text-black">
                                 {o.orderNumber}
                               </span>
+                              {o.isUrgent && (
+                                <span className="rounded bg-stop-500 px-1.5 text-[10px] font-bold text-white">
+                                  URGENT
+                                </span>
+                              )}
                               {o.source === 'manual' && (
                                 <span className="rounded bg-brand-200 px-1 text-[10px] font-bold text-brand-900">
                                   MANUAL
@@ -688,12 +712,22 @@ export default function AdminDashboard({ user }) {
                           </td>
                           <td className="px-3 py-3 align-top">
                             {!done && (
-                              <button
-                                onClick={() => setModal({ type: 'cancel', order: o })}
-                                className="btn btn-ghost px-2.5 py-1.5 text-xs text-stop-600"
-                              >
-                                Cancel
-                              </button>
+                              <div className="flex flex-col gap-1.5">
+                                <button
+                                  onClick={() => setModal({ type: 'urgent', order: o })}
+                                  className={`btn px-2.5 py-1.5 text-xs ${
+                                    o.isUrgent ? 'btn-red' : 'btn-ghost text-stop-600'
+                                  }`}
+                                >
+                                  {o.isUrgent ? 'Urgent ✓' : 'Urgent'}
+                                </button>
+                                <button
+                                  onClick={() => setModal({ type: 'cancel', order: o })}
+                                  className="btn btn-ghost px-2.5 py-1.5 text-xs text-ink-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -716,6 +750,15 @@ export default function AdminDashboard({ user }) {
               setToast(msg);
               load(true);
             }}
+          />
+        </Modal>
+      )}
+      {modal?.type === 'urgent' && (
+        <Modal title="Urgent delivery" onClose={() => setModal(null)}>
+          <UrgentForm
+            order={modal.order}
+            onSave={(payload) => saveUrgent(modal.order.id, payload)}
+            onClose={() => setModal(null)}
           />
         </Modal>
       )}
@@ -844,19 +887,34 @@ function StatusDetail({ order: o }) {
   return null;
 }
 
-function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAssign, onCancel }) {
+function AdminOrderCard({
+  order: o,
+  riders,
+  picked,
+  busy,
+  flash,
+  onToggle,
+  onAssign,
+  onCancel,
+  onUrgent,
+}) {
   const un = !o.assignedToId;
   const done = o.status === 'delivered' || o.status === 'cancelled';
 
   return (
     <article
       className={`overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ${
-        un ? 'ring-brand-300' : 'ring-ink-200'
+        o.isUrgent ? 'ring-2 ring-stop-500' : un ? 'ring-brand-300' : 'ring-ink-200'
       } ${flash ? 'pk-flash' : ''}`}
     >
       <div className={`flex items-center gap-2 px-3 py-2.5 ${un ? 'bg-brand-50' : 'bg-ink-50'}`}>
         <input type="checkbox" checked={picked} onChange={onToggle} className="size-4" />
         <span className="font-mono font-bold text-black">{o.orderNumber}</span>
+        {o.isUrgent && (
+          <span className="rounded bg-stop-500 px-1.5 text-[10px] font-bold text-white">
+            URGENT
+          </span>
+        )}
         {o.source === 'manual' && (
           <span className="rounded bg-brand-200 px-1.5 text-[10px] font-bold text-brand-900">
             MANUAL
@@ -917,9 +975,17 @@ function AdminOrderCard({ order: o, riders, picked, busy, flash, onToggle, onAss
         )}
 
         {!done && (
-          <button onClick={onCancel} className="btn btn-ghost w-full py-2.5 text-sm text-stop-600">
-            Cancel order
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={onUrgent}
+              className={`btn py-2.5 text-sm ${o.isUrgent ? 'btn-red' : 'btn-ghost text-stop-600'}`}
+            >
+              {o.isUrgent ? 'Urgent ✓' : 'Mark urgent'}
+            </button>
+            <button onClick={onCancel} className="btn btn-ghost py-2.5 text-sm text-ink-600">
+              Cancel order
+            </button>
+          </div>
         )}
       </div>
     </article>
@@ -1312,6 +1378,91 @@ function NewOrderForm({ riders, onDone }) {
         {busy && <span className="pk-spinner" />}
         {busy ? 'Creating' : 'Create order'}
       </button>
+    </div>
+  );
+}
+
+function UrgentForm({ order, onSave, onClose }) {
+  const [note, setNote] = useState(order.urgentNote || '');
+  const [voice, setVoice] = useState(order.voiceNote || null);
+  const [secs, setSecs] = useState(order.voiceNoteSec || null);
+  const [busy, setBusy] = useState(false);
+
+  const canSave = note.trim() || voice;
+
+  return (
+    <div className="mt-3 space-y-3">
+      <p className="text-sm text-ink-500">
+        {order.customerName} · {order.orderNumber}
+        {order.assignedTo ? ` · with ${order.assignedTo.name}` : ' · not assigned yet'}
+      </p>
+
+      <div className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-900">
+        This jumps to the top of the rider's list with a red banner.
+      </div>
+
+      <label className="block">
+        <span className="text-sm font-medium text-ink-700">Message for the rider</span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={3}
+          placeholder="Deliver within 1 hour, customer waiting"
+          className="mt-1 w-full rounded-xl border border-ink-300 px-3.5 py-3 outline-none focus:border-stop-500"
+        />
+      </label>
+
+      <div>
+        <span className="text-sm font-medium text-ink-700">Voice note</span>
+        <span className="ml-1 text-xs text-ink-400">optional</span>
+        <div className="mt-1">
+          <VoiceRecorder
+            value={voice}
+            seconds={secs}
+            onChange={(v, s) => {
+              setVoice(v);
+              setSecs(s);
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2 pt-1">
+        {order.isUrgent ? (
+          <button
+            onClick={async () => {
+              setBusy(true);
+              await onSave({ isUrgent: false });
+              setBusy(false);
+            }}
+            disabled={busy}
+            className="btn btn-ghost flex-1 py-3.5 text-ink-600"
+          >
+            Remove urgent
+          </button>
+        ) : (
+          <button onClick={onClose} className="btn btn-ghost flex-1 py-3.5">
+            Go back
+          </button>
+        )}
+        <button
+          onClick={async () => {
+            setBusy(true);
+            await onSave({
+              isUrgent: true,
+              urgentNote: note,
+              voiceNote: voice,
+              voiceNoteSec: secs,
+            });
+            setBusy(false);
+          }}
+          disabled={busy || !canSave}
+          className="btn btn-red flex-1 py-3.5"
+        >
+          {busy && <span className="pk-spinner" />}
+          {order.isUrgent ? 'Update' : 'Mark urgent'}
+        </button>
+      </div>
     </div>
   );
 }

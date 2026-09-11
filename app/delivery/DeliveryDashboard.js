@@ -14,6 +14,7 @@ import {
 } from '@/lib/constants';
 import PincodeBadge from '@/components/PincodeBadge';
 import DateRange from '@/components/DateRange';
+import { VoicePlayer } from '@/components/VoiceNote';
 
 const TABS = [
   { key: 'todo', label: 'Assigned', status: 'out_for_delivery' },
@@ -55,8 +56,12 @@ export default function DeliveryDashboard({ user }) {
         const fresh = [...liveIds].filter((id) => !idsRef.current.has(id)).length;
         if (fresh > 0 && quiet) {
           setNewCount((n) => n + fresh);
+          const anyUrgent = list.some(
+            (x) => x.isUrgent && liveIds.has(x.id) && !idsRef.current.has(x.id)
+          );
           try {
-            navigator.vibrate?.([120, 60, 120]);
+            // a longer buzz when one of them is urgent
+            navigator.vibrate?.(anyUrgent ? [250, 100, 250, 100, 250] : [120, 60, 120]);
           } catch {}
         }
       }
@@ -237,11 +242,14 @@ export default function DeliveryDashboard({ user }) {
 
   const shown = orders
     .filter((o) => inTab(o, tab) && inRange(o, tab))
-    .sort((a, b) =>
-      tab === 'rescheduled'
-        ? new Date(a.pendingUntil || a.orderDate) - new Date(b.pendingUntil || b.orderDate)
-        : new Date(stampFor(b, tab)) - new Date(stampFor(a, tab))
-    );
+    .sort((a, b) => {
+      // anything marked urgent comes first, whatever the tab
+      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
+      if (tab === 'rescheduled') {
+        return new Date(a.pendingUntil || a.orderDate) - new Date(b.pendingUntil || b.orderDate);
+      }
+      return new Date(stampFor(b, tab)) - new Date(stampFor(a, tab));
+    });
 
   return (
     <main className="min-h-dvh bg-white pb-10">
@@ -392,7 +400,36 @@ function OrderCard({ order: o, tab, busy, onDeliver, onPending, onCancel, onGive
   }
 
   return (
-    <article className="overflow-hidden rounded-2xl bg-white shadow-md shadow-brand-900/5 ring-1 ring-ink-200">
+    <article
+      className={`overflow-hidden rounded-2xl bg-white shadow-md ${
+        o.isUrgent
+          ? 'shadow-stop-500/20 ring-2 ring-stop-500'
+          : 'shadow-brand-900/5 ring-1 ring-ink-200'
+      }`}
+    >
+      {o.isUrgent && (
+        <div className="bg-stop-500 px-4 py-2">
+          <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-white">
+            <span aria-hidden>🔴</span> Urgent
+            {o.urgentBy && (
+              <span className="ml-auto text-xs font-medium normal-case opacity-90">
+                from {o.urgentBy}
+              </span>
+            )}
+          </div>
+          {o.urgentNote && (
+            <p className="mt-1 text-[15px] font-semibold leading-snug text-white">
+              {o.urgentNote}
+            </p>
+          )}
+          {o.voiceNote && (
+            <div className="mt-2 rounded-xl bg-white p-2.5">
+              <VoicePlayer src={o.voiceNote} seconds={o.voiceNoteSec} tone="red" />
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center gap-2 border-b border-ink-100 bg-ink-50 px-4 py-2.5">
         <span className="font-mono text-lg font-bold tracking-tight text-black">
           {o.orderNumber}
