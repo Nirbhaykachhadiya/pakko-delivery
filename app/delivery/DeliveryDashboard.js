@@ -55,15 +55,29 @@ export default function DeliveryDashboard({ user }) {
   }, [toast]);
 
   async function setStatus(orderId, status, extra = {}) {
-    setBusyId(orderId);
-    const res = await fetch('/api/orders/status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId, status, ...extra }),
-    });
-    const d = await res.json();
-    setBusyId(null);
-    if (!res.ok) return setToast(d.error || 'Could not save');
+    const before = orders;
+    const now = new Date().toISOString();
+
+    // Move the card straight away - a rider on mobile data should not wait
+    setOrders((cur) =>
+      cur.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              status,
+              deliveredAt: status === 'delivered' ? o.deliveredAt || now : null,
+              paymentMode: status === 'delivered' ? extra.paymentMode : null,
+              cancelledAt: status === 'cancelled' ? now : null,
+              cancelReason: status === 'cancelled' ? extra.cancelReason : null,
+              cancelNote: status === 'cancelled' ? extra.cancelNote : null,
+              pendingNote: status === 'rescheduled' ? extra.pendingNote : null,
+              pendingUntil: status === 'rescheduled' ? extra.pendingUntil || null : null,
+              lastAttemptAt:
+                status === 'rescheduled' || status === 'cancelled' ? now : o.lastAttemptAt,
+            }
+          : o
+      )
+    );
     setSheet(null);
     setToast(
       status === 'delivered'
@@ -74,22 +88,37 @@ export default function DeliveryDashboard({ user }) {
             ? 'Moved to Pending'
             : 'Back in Assigned'
     );
-    load();
+
+    const res = await fetch('/api/orders/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId, status, ...extra }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      setOrders(before);
+      setToast(err.error || 'Could not save - try again');
+    }
   }
 
   async function handover(orderId, riderId, riderName) {
-    setBusyId(orderId);
+    const before = orders;
+    setOrders((cur) => cur.filter((o) => o.id !== orderId));
+    setSheet(null);
+    setToast(`Given to ${riderName}`);
+
     const res = await fetch('/api/orders/assign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderIds: [orderId], riderId }),
     });
-    const d = await res.json();
-    setBusyId(null);
-    if (!res.ok) return setToast(d.error || 'Could not pass it on');
-    setSheet(null);
-    setToast(`Given to ${riderName}`);
-    load();
+
+    if (!res.ok) {
+      const err = await res.json();
+      setOrders(before);
+      setToast(err.error || 'Could not pass it on');
+    }
   }
 
   async function logout() {

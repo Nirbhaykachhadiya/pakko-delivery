@@ -28,6 +28,13 @@ export default function AdminDashboard({ user }) {
   const [showFilters, setShowFilters] = useState(false);
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [typedQ, setTypedQ] = useState('');
+
+  // Wait until typing stops before querying
+  useEffect(() => {
+    const t = setTimeout(() => setFilters((f) => ({ ...f, q: typedQ })), 350);
+    return () => clearTimeout(t);
+  }, [typedQ]);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -71,28 +78,69 @@ export default function AdminDashboard({ user }) {
     const res = await fetch('/api/sync', { method: 'POST' });
     const d = await res.json();
     setSyncing(false);
-    setToast(res.ok ? `Synced · ${d.created} new, ${d.updated} updated` : d.error || 'Sync failed');
+    setToast(
+      res.ok
+        ? `Synced in ${(d.ms / 1000).toFixed(1)}s · ${d.created} new, ${d.updated} updated`
+        : d.error || 'Sync failed'
+    );
     if (res.ok) load();
   }
 
   async function assign(orderIds, riderId) {
-    setBusyIds(new Set(orderIds));
+    const who = riderId ? riders.find((r) => r.id === Number(riderId)) : null;
+    const ids = new Set(orderIds.map(Number));
+
+    // Update the screen first so the change is instant, then confirm with the
+    // server. Only the touched rows are refreshed - no full page reload.
+    const before = orders;
+    setOrders((cur) =>
+      cur.map((o) =>
+        ids.has(o.id)
+          ? {
+              ...o,
+              assignedToId: riderId ? Number(riderId) : null,
+              assignedTo: who ? { id: who.id, name: who.name } : null,
+              assignedByName: user.name,
+              assignedByRole: 'admin',
+              status:
+                ['pending', 'out_for_delivery', 'rescheduled'].includes(o.status)
+                  ? riderId
+                    ? 'out_for_delivery'
+                    : 'pending'
+                  : o.status,
+            }
+          : o
+      )
+    );
+    setFlashIds(new Set(orderIds));
+    setTimeout(() => setFlashIds(new Set()), 950);
+    setToast(who ? `Given to ${who.name}` : 'Assignment removed');
+    setPicked(new Set());
+
     const res = await fetch('/api/orders/assign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderIds, riderId }),
     });
-    const d = await res.json();
-    setBusyIds(new Set());
-    if (!res.ok) return setToast(d.error || 'Could not assign');
 
-    setFlashIds(new Set(orderIds));
-    setTimeout(() => setFlashIds(new Set()), 950);
+    if (!res.ok) {
+      const d = await res.json();
+      setOrders(before); // put it back if the server refused
+      return setToast(d.error || 'Could not assign');
+    }
 
-    const who = riderId ? riders.find((r) => r.id === Number(riderId))?.name : null;
-    setToast(who ? `Given to ${who}` : 'Assignment removed');
-    load();
+    refreshStats();
   }
+
+  // Stats are cheap and can catch up on their own
+  const refreshStats = useCallback(async () => {
+    const sq = new URLSearchParams();
+    if (filters.from) sq.set('from', filters.from);
+    if (filters.to) sq.set('to', filters.to);
+    if (filters.rider) sq.set('rider', filters.rider);
+    const s = await fetch(`/api/stats?${sq}`).then((x) => x.json());
+    setStats(s);
+  }, [filters.from, filters.to, filters.rider]);
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -186,8 +234,8 @@ export default function AdminDashboard({ user }) {
             <section className="rounded-2xl border border-ink-200 bg-white shadow-sm">
               <div className="flex flex-wrap items-center gap-2 p-3">
                 <input
-                  value={filters.q}
-                  onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+                  value={typedQ}
+                  onChange={(e) => setTypedQ(e.target.value)}
                   placeholder="Search name, phone, pincode, order no."
                   className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-brand-600"
                 />

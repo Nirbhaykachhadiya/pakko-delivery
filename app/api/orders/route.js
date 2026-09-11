@@ -12,6 +12,37 @@ const DATE_FIELD = {
   rescheduled: 'lastAttemptAt',
 };
 
+// Only what the screens actually render. Skipping the unused columns keeps
+// the payload small, which matters most on a phone on mobile data.
+const SELECT = {
+  id: true,
+  shopifyOrderId: true,
+  orderNumber: true,
+  source: true,
+  customerName: true,
+  phone: true,
+  address: true,
+  pincode: true,
+  products: true,
+  totalPrice: true,
+  orderDate: true,
+  status: true,
+  assignedToId: true,
+  assignedAt: true,
+  assignedByName: true,
+  assignedByRole: true,
+  deliveredAt: true,
+  paymentMode: true,
+  pendingNote: true,
+  pendingUntil: true,
+  attemptCount: true,
+  lastAttemptAt: true,
+  cancelReason: true,
+  cancelNote: true,
+  cancelledAt: true,
+  assignedTo: { select: { id: true, name: true } },
+};
+
 export async function GET(req) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Not logged in' }, { status: 401 });
@@ -23,6 +54,7 @@ export async function GET(req) {
   const from = searchParams.get('from');
   const to = searchParams.get('to');
   const dateBy = searchParams.get('dateBy');
+  const take = Math.min(Number(searchParams.get('take')) || 200, 500);
 
   const cutoff = new Date(`${ORDER_CUTOFF}T00:00:00`);
   const where = { orderDate: { gte: cutoff } };
@@ -64,10 +96,9 @@ export async function GET(req) {
 
   const orders = await prisma.order.findMany({
     where,
-    // "manual" sorts before "shopify", so hand-typed orders sit at the top
     orderBy: [{ source: 'asc' }, { orderDate: 'desc' }],
-    take: 500,
-    include: { assignedTo: { select: { id: true, name: true } } },
+    take,
+    select: SELECT,
   });
 
   return NextResponse.json({ orders });

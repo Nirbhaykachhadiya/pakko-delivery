@@ -6,62 +6,112 @@ import { ORDER_CUTOFF } from '@/lib/constants';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
+// Only these fields come from Shopify. Everything else (assignment, status,
+// notes) is ours and must never be touched by a sync.
+function shopifyFields(d) {
+  return {
+    customerName: d.customerName,
+    phone: d.phone,
+    address: d.address,
+    pincode: d.pincode,
+    city: d.city,
+    products: d.products,
+    totalPrice: d.totalPrice,
+  };
+}
+
+// Cheap comparison so unchanged orders are skipped entirely
+function sameAsStored(a, b) {
+  return (
+    a.customerName === b.customerName &&
+    a.phone === b.phone &&
+    a.address === b.address &&
+    a.pincode === b.pincode &&
+    a.totalPrice === b.totalPrice &&
+    JSON.stringify(a.products) === JSON.stringify(b.products)
+  );
+}
 
 export async function POST(req) {
   const auth = await requireRole('admin');
   if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
+  const started = Date.now();
   const cutoff = new Date(`${ORDER_CUTOFF}T00:00:00`);
 
   try {
-    // Only ever pull from the cutoff forward
     const raw = await fetchShopifyOrders({ since: cutoff });
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
 
-    for (const o of raw) {
-      const data = mapOrder(o);
+    const incoming = raw.map(mapOrder).filter((d) => d.orderDate >= cutoff);
 
-      if (data.orderDate < cutoff) {
-        skipped++;
-        continue;
+    if (incoming.length === 0) {
+      return NextResponse.json({ ok: true, created: 0, updated: 0, skipped: 0, ms: Date.now() - started });
+    }
+
+    // ---- ONE query to find out what we already have ----
+    const ids = incoming.map((d) => d.shopifyOrderId);
+    const existing = await prisma.order.findMany({
+      where: { shopifyOrderId: { in: ids } },
+      select: {
+        shopifyOrderId: true,
+        customerName: true,
+        phone: true,
+        address: true,
+        pincode: true,
+        totalPrice: true,
+        products: true,
+      },
+    });
+
+    const byId = new Map(existing.map((e) => [e.shopifyOrderId, e]));
+
+    const toCreate = [];
+    const toUpdate = [];
+
+    for (const d of incoming) {
+      const prev = byId.get(d.shopifyOrderId);
+      if (!prev) {
+        toCreate.push(d);
+      } else if (!sameAsStored(d, prev)) {
+        toUpdate.push(d);
       }
+      // identical rows are skipped - most orders on a repeat sync
+    }
 
-      const existing = await prisma.order.findUnique({
-        where: { shopifyOrderId: data.shopifyOrderId },
-        select: { id: true },
-      });
+    // ---- ONE query to insert everything new ----
+    let created = 0;
+    if (toCreate.length) {
+      const res = await prisma.order.createMany({ data: toCreate, skipDuplicates: true });
+      created = res.count;
+    }
 
-      if (existing) {
-        // Refresh only Shopify-side fields; never touch delivery workflow
-        await prisma.order.update({
-          where: { shopifyOrderId: data.shopifyOrderId },
-          data: {
-            customerName: data.customerName,
-            phone: data.phone,
-            address: data.address,
-            pincode: data.pincode,
-            city: data.city,
-            products: data.products,
-            totalPrice: data.totalPrice,
-          },
-        });
-        updated++;
-      } else {
-        await prisma.order.create({ data });
-        created++;
+    // ---- Changed rows go in batches, not one call each ----
+    let updated = 0;
+    if (toUpdate.length) {
+      const BATCH = 25;
+      for (let i = 0; i < toUpdate.length; i += BATCH) {
+        const slice = toUpdate.slice(i, i + BATCH);
+        await prisma.$transaction(
+          slice.map((d) =>
+            prisma.order.update({
+              where: { shopifyOrderId: d.shopifyOrderId },
+              data: shopifyFields(d),
+            })
+          )
+        );
+        updated += slice.length;
       }
     }
 
     return NextResponse.json({
       ok: true,
-      fetched: raw.length,
+      fetched: incoming.length,
       created,
       updated,
-      skipped,
-      cutoff: ORDER_CUTOFF,
-      syncedAt: new Date().toISOString(),
+      skipped: incoming.length - created - updated,
+      ms: Date.now() - started,
     });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });

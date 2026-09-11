@@ -69,4 +69,7 @@ model Order {
   @@index([orderDate])
   @@index([pincode])
   @@index([source])
+  // matches the query the dashboards actually run most
+  @@index([orderDate, assignedToId])
+  @@index([assignedToId, status])
 }
