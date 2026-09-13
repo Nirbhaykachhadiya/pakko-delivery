@@ -15,6 +15,14 @@ import {
 import PincodeBadge from '@/components/PincodeBadge';
 import DateRange from '@/components/DateRange';
 import { VoicePlayer } from '@/components/VoiceNote';
+import ProductSummary from '@/components/ProductSummary';
+
+const TAB_TONE = {
+  todo: 'blue',
+  rescheduled: 'yellow',
+  delivered: 'green',
+  cancelled: 'red',
+};
 
 const TABS = [
   { key: 'todo', label: 'Assigned', status: 'out_for_delivery' },
@@ -22,6 +30,22 @@ const TABS = [
   { key: 'delivered', label: 'Delivered', status: 'delivered' },
   { key: 'cancelled', label: 'Cancelled', status: 'cancelled' },
 ];
+
+// A failed route can return an empty body, so never call .json() blindly
+async function safeJson(url, init) {
+  try {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    if (!text) return { error: `Empty reply from ${url} (${res.status})` };
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: `Bad reply from ${url} (${res.status})` };
+    }
+  } catch (e) {
+    return { error: e.message };
+  }
+}
 
 export default function DeliveryDashboard({ user }) {
   const router = useRouter();
@@ -43,9 +67,10 @@ export default function DeliveryDashboard({ user }) {
     async (quiet = false) => {
       if (!quiet) setLoading(true);
       const [o, u] = await Promise.all([
-        fetch('/api/orders').then((r) => r.json()),
-        fetch('/api/users').then((r) => r.json()),
+        safeJson('/api/orders'),
+        safeJson('/api/users'),
       ]);
+      if (o.error) setToast(o.error);
       const list = o.orders || [];
 
       // Anything newly landed in "Assigned" that this rider has not seen yet
@@ -79,7 +104,8 @@ export default function DeliveryDashboard({ user }) {
   const checkForChanges = useCallback(async () => {
     if (pausedRef.current) return;
     try {
-      const v = await fetch('/api/orders/version').then((r) => r.json());
+      const v = await safeJson('/api/orders/version');
+      if (v.error) return;
       const sig = `${v.count}:${v.latest}`;
       if (sigRef.current === null) {
         sigRef.current = sig;
@@ -291,6 +317,12 @@ export default function DeliveryDashboard({ user }) {
           ))}
         </div>
       </header>
+
+      {!loading && shown.length > 0 && (
+        <div className="px-3 pt-3">
+          <ProductSummary orders={shown} tone={TAB_TONE[tab]} />
+        </div>
+      )}
 
       {newCount > 0 && (
         <button

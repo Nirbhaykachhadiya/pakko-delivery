@@ -69,6 +69,9 @@ export async function GET(req) {
     where.assignedToId = user.id;
   } else if (rider === 'unassigned') {
     where.assignedToId = null;
+    // "Not assigned" means nobody is carrying it AND it is still live.
+    // A cancelled order leaves this list even though it has no rider.
+    if (!status) where.status = { notIn: ['delivered', 'cancelled'] };
   } else if (rider) {
     where.assignedToId = Number(rider);
   }
@@ -100,13 +103,22 @@ export async function GET(req) {
     ];
   }
 
-  const orders = await prisma.order.findMany({
-    where,
-    // urgent first, then hand-typed orders, then newest
-    orderBy: [{ isUrgent: 'desc' }, { source: 'asc' }, { orderDate: 'desc' }],
-    take,
-    select: SELECT,
-  });
+  try {
+    const orders = await prisma.order.findMany({
+      where,
+      // urgent first, then hand-typed orders, then newest
+      orderBy: [{ isUrgent: 'desc' }, { source: 'asc' }, { orderDate: 'desc' }],
+      take,
+      select: SELECT,
+    });
 
-  return NextResponse.json({ orders });
+    return NextResponse.json({ orders });
+  } catch (e) {
+    // Always answer with JSON so the browser can show what went wrong
+    console.error('GET /api/orders failed:', e);
+    return NextResponse.json(
+      { error: e.message, code: e.code || null, orders: [] },
+      { status: 500 }
+    );
+  }
 }

@@ -37,7 +37,14 @@ export async function GET(req) {
 
   const [byStatus, unassignedGlobal, total, riders, perRider, byPayment] = await Promise.all([
     prisma.order.groupBy({ by: ['status'], where: scoped, _count: { _all: true } }),
-    prisma.order.count({ where: { ...base, assignedToId: null } }),
+    prisma.order.count({
+      where: {
+        ...base,
+        assignedToId: null,
+        // same rule as the list: finished orders are not "not assigned"
+        status: { notIn: ['delivered', 'cancelled'] },
+      },
+    }),
     prisma.order.count({ where: scoped }),
     prisma.user.findMany({
       where: { role: 'delivery', active: true },

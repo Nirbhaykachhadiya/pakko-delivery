@@ -13,9 +13,33 @@ import {
 import { areaFor } from '@/lib/pincodes';
 import PincodeBadge from '@/components/PincodeBadge';
 import DateRange from '@/components/DateRange';
+import ProductSummary from '@/components/ProductSummary';
 import { VoiceRecorder } from '@/components/VoiceNote';
 
+// A failed route can return an empty body, so never call .json() blindly
+async function safeJson(url, init) {
+  try {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    if (!text) return { error: `Empty reply from ${url} (${res.status})` };
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: `Bad reply from ${url} (${res.status})` };
+    }
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
 const REFRESH_MS = 25000;
+
+// the strip takes its colour from whatever slice is being viewed
+const TONE_FOR = {
+  rescheduled: 'yellow',
+  delivered: 'green',
+  cancelled: 'red',
+};
 
 function UserIcon({ className = '' }) {
   return (
@@ -106,12 +130,14 @@ export default function AdminDashboard({ user }) {
     async (quiet = false) => {
       if (!quiet) setLoading(true);
       const [o, s, u] = await Promise.all([
-        fetch(`/api/orders?${orderQuery}`).then((x) => x.json()),
-        fetch(`/api/stats?${statsQuery}`).then((x) => x.json()),
-        fetch('/api/users').then((x) => x.json()),
+        safeJson(`/api/orders?${orderQuery}`),
+        safeJson(`/api/stats?${statsQuery}`),
+        safeJson('/api/users'),
       ]);
+      if (o.error) setToast(`Orders: ${o.error}`);
+      else if (s.error) setToast(`Stats: ${s.error}`);
       setOrders(o.orders || []);
-      setStats(s);
+      setStats(s.error ? null : s);
       setRiders(u.riders || []);
       setTeam(u.all || []);
       if (!quiet) setPicked(new Set());
@@ -525,6 +551,13 @@ export default function AdminDashboard({ user }) {
                   </tbody>
                 </table>
               </section>
+            )}
+
+            {orders.length > 0 && (
+              <ProductSummary
+                orders={orders}
+                tone={TONE_FOR[statusPick] || 'blue'}
+              />
             )}
 
             <div className="flex items-center gap-2">
