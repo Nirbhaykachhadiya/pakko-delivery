@@ -280,16 +280,16 @@ export default function DeliveryDashboard({ user }) {
   // whichever is nearest. A refresh re-runs it, so the run stays sensible.
   const pinStats = useMemo(() => pincodeStats(inThisTab), [inThisTab]);
 
-  // Drop a pincode filter the moment that area has nothing left in this tab
-  useEffect(() => {
-    if (pin && !pinStats.some((s) => s.pin === pin)) setPin('');
-  }, [pin, pinStats]);
+  // An area the rider finished drops out of the list, so fall back to showing
+  // everything. Worked out while rendering rather than corrected afterwards,
+  // so there is never a frame showing an empty list.
+  const livePin = pinStats.some((s) => s.pin === pin) ? pin : '';
 
   // The item chips describe the chosen area, so a rider can pick an area and
   // then an item within it, and still switch items without losing the area.
   const inThisArea = useMemo(
-    () => inThisTab.filter((o) => !pin || pinOf(o) === pin),
-    [inThisTab, pin]
+    () => inThisTab.filter((o) => !livePin || pinOf(o) === livePin),
+    [inThisTab, livePin]
   );
 
   const shown = useMemo(() => {
@@ -362,7 +362,7 @@ export default function DeliveryDashboard({ user }) {
         <div className="space-y-3 px-3 pt-3">
           <PincodeFilter
             stats={pinStats}
-            value={pin}
+            value={livePin}
             onChange={(p) => {
               setPin(p);
               setItem('');
@@ -401,8 +401,8 @@ export default function DeliveryDashboard({ user }) {
             <p className="text-ink-500">
               {item
                 ? 'No orders with that item here.'
-                : pin
-                  ? `Nothing left in ${pin === 'unknown' ? 'orders without a pincode' : pin}.`
+                : livePin
+                  ? `Nothing left in ${livePin === 'unknown' ? 'orders without a pincode' : livePin}.`
                   : tab === 'todo'
                     ? 'Nothing assigned to you here.'
                     : `No ${TABS.find((t) => t.key === tab).label.toLowerCase()} orders here.`}
@@ -413,7 +413,7 @@ export default function DeliveryDashboard({ user }) {
                   Show all items
                 </button>
               )}
-              {pin && (
+              {livePin && (
                 <button onClick={() => setPin('')} className="btn btn-ghost px-4 py-2 text-sm">
                   Show all areas
                 </button>

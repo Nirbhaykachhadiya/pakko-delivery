@@ -278,10 +278,13 @@ export default function AdminDashboard({ user }) {
 
   // Any change of rider, status, date or search re-slices the data, so the
   // area and item filters start fresh rather than silently hiding rows.
-  useEffect(() => {
+  // Adjusted while rendering - an effect would paint the stale filter first.
+  const [lastQuery, setLastQuery] = useState(orderQuery);
+  if (lastQuery !== orderQuery) {
+    setLastQuery(orderQuery);
     setPin('');
     setItem('');
-  }, [orderQuery]);
+  }
 
   // Same run order the riders see, so admin and rider read one list
   const pinStats = useMemo(() => pincodeStats(orders), [orders]);
@@ -296,15 +299,12 @@ export default function AdminDashboard({ user }) {
     [afterPin, item]
   );
 
-  // A hidden row must never stay in a bulk assign
-  useEffect(() => {
-    setPicked((cur) => {
-      if (cur.size === 0) return cur;
-      const live = new Set(visible.map((o) => o.id));
-      const next = new Set([...cur].filter((id) => live.has(id)));
-      return next.size === cur.size ? cur : next;
-    });
-  }, [visible]);
+  // A row hidden by a filter must never ride along in a bulk assign, so the
+  // selection is read through what is actually on screen.
+  const pickedVisible = useMemo(
+    () => visible.filter((o) => picked.has(o.id)).map((o) => o.id),
+    [visible, picked]
+  );
 
   const narrowed = visible.length !== orders.length;
 
@@ -628,15 +628,17 @@ export default function AdminDashboard({ user }) {
               )}
             </div>
 
-            {picked.size > 0 && (
+            {pickedVisible.length > 0 && (
               <div className="sticky top-[100px] z-20 flex flex-wrap items-center gap-2 rounded-xl bg-brand-800 px-3 py-2.5 text-white shadow-lg">
-                <span className="text-sm font-medium tabular-nums">{picked.size} selected</span>
+                <span className="text-sm font-medium tabular-nums">
+                  {pickedVisible.length} selected
+                </span>
                 <select
                   defaultValue=""
                   onChange={(e) => {
                     if (!e.target.value) return;
                     const v = e.target.value;
-                    assign([...picked], v === 'unassign' ? null : Number(v));
+                    assign(pickedVisible, v === 'unassign' ? null : Number(v));
                     e.target.value = '';
                   }}
                   className="rounded-lg bg-white px-2.5 py-1.5 text-sm text-black"
@@ -689,7 +691,7 @@ export default function AdminDashboard({ user }) {
                       <th className="w-10 px-3 py-2.5">
                         <input
                           type="checkbox"
-                          checked={visible.length > 0 && picked.size === visible.length}
+                          checked={visible.length > 0 && pickedVisible.length === visible.length}
                           onChange={(e) =>
                             setPicked(
                               e.target.checked ? new Set(visible.map((o) => o.id)) : new Set()

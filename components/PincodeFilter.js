@@ -6,42 +6,25 @@ import { areaFor, NO_PIN } from '@/lib/pincodes';
 // Note: no `.btn` class anywhere below. `.btn` is unlayered CSS, so it beats
 // Tailwind's layered utilities and force-centres every row. Plain flex here.
 const TONES = {
-  blue: { solid: 'bg-brand-600 text-white', soft: 'bg-brand-50 text-brand-800' },
-  yellow: { solid: 'bg-warn-500 text-warn-900', soft: 'bg-warn-50 text-warn-900' },
-  green: { solid: 'bg-good-500 text-white', soft: 'bg-good-50 text-good-900' },
-  red: { solid: 'bg-stop-500 text-white', soft: 'bg-stop-50 text-stop-900' },
+  blue: 'bg-brand-600 text-white',
+  yellow: 'bg-warn-500 text-warn-900',
+  green: 'bg-good-500 text-white',
+  red: 'bg-stop-500 text-white',
 };
 
 const labelFor = (pin) =>
   pin === NO_PIN ? 'No pincode' : areaFor(pin) || 'Add area name';
 
-/**
- * The pincode picker under every tab.
- *
- * `stats` arrives already in delivery order - busiest pincode first, then its
- * nearest neighbour - so the rider reads it the same way they ride it.
- * Tapping one narrows the list to that area; "All areas" puts it back.
- */
-export default function PincodeFilter({ stats, value, onChange, tone = 'blue' }) {
-  const [open, setOpen] = useState(false);
-  const t = TONES[tone] || TONES.blue;
-
-  if (!stats || stats.length < 2) return null;
-
-  const total = stats.reduce((n, s) => n + s.count, 0);
-  const picked = stats.find((s) => s.pin === value);
-
-  const choose = (pin) => {
-    onChange(pin);
-    setOpen(false);
-  };
-
-  const Row = ({ rank, title, sub, count, on, onClick }) => (
+// Kept at module scope. Declared inside the component it would be a brand new
+// component type on every render, so React would tear down and rebuild every
+// row instead of updating it.
+function Row({ rank, title, sub, count, on, solid, onClick }) {
+  return (
     <button
       type="button"
       onClick={onClick}
       className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors ${
-        on ? t.solid : 'bg-white text-ink-700 active:bg-ink-50'
+        on ? solid : 'bg-white text-ink-700 active:bg-ink-50'
       }`}
     >
       {rank != null && (
@@ -74,6 +57,28 @@ export default function PincodeFilter({ stats, value, onChange, tone = 'blue' })
       </span>
     </button>
   );
+}
+
+/**
+ * The pincode picker under every tab.
+ *
+ * `stats` arrives already in delivery order - busiest pincode first, then its
+ * nearest neighbour - so the rider reads it the same way they ride it.
+ * Tapping one narrows the list to that area; "All areas" puts it back.
+ */
+export default function PincodeFilter({ stats, value, onChange, tone = 'blue' }) {
+  const [open, setOpen] = useState(false);
+  const solid = TONES[tone] || TONES.blue;
+
+  if (!stats || stats.length < 2) return null;
+
+  const total = stats.reduce((n, s) => n + s.count, 0);
+  const picked = stats.find((s) => s.pin === value);
+
+  const choose = (pin) => {
+    onChange(pin);
+    setOpen(false);
+  };
 
   return (
     <div className="relative">
@@ -81,7 +86,7 @@ export default function PincodeFilter({ stats, value, onChange, tone = 'blue' })
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left ring-1 ${
-          picked ? `${t.solid} ring-transparent` : 'bg-white text-ink-700 ring-ink-200'
+          picked ? `${solid} ring-transparent` : 'bg-white text-ink-700 ring-ink-200'
         }`}
       >
         <span className="min-w-0 flex-1">
@@ -122,6 +127,7 @@ export default function PincodeFilter({ stats, value, onChange, tone = 'blue' })
               sub={`${stats.length} pincodes`}
               count={total}
               on={!picked}
+              solid={solid}
               onClick={() => choose('')}
             />
             <div className="my-1 border-t border-ink-100" />
@@ -133,6 +139,7 @@ export default function PincodeFilter({ stats, value, onChange, tone = 'blue' })
                 sub={labelFor(s.pin)}
                 count={s.count}
                 on={s.pin === value}
+                solid={solid}
                 onClick={() => choose(s.pin)}
               />
             ))}
