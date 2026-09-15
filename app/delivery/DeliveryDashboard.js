@@ -12,7 +12,9 @@ import {
   plainPhone,
   isoDay,
 } from '@/lib/constants';
+import { normalisePin, routeOrder } from '@/lib/pincodes';
 import PincodeBadge from '@/components/PincodeBadge';
+import PincodeFilter from '@/components/PincodeFilter';
 import DateRange from '@/components/DateRange';
 import { VoicePlayer } from '@/components/VoiceNote';
 import ProductSummary from '@/components/ProductSummary';
@@ -52,6 +54,7 @@ export default function DeliveryDashboard({ user }) {
   const [orders, setOrders] = useState([]);
   const [riders, setRiders] = useState([]);
   const [tab, setTab] = useState('todo');
+  const [pin, setPin] = useState('');
   const [range, setRange] = useState({ from: '', to: '' });
   const [loading, setLoading] = useState(true);
   const [sheet, setSheet] = useState(null);
@@ -266,16 +269,63 @@ export default function DeliveryDashboard({ user }) {
     }
   }, [tab, newCount]);
 
-  const shown = orders
-    .filter((o) => inTab(o, tab) && inRange(o, tab))
-    .sort((a, b) => {
-      // anything marked urgent comes first, whatever the tab
-      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
-      if (tab === 'rescheduled') {
-        return new Date(a.pendingUntil || a.orderDate) - new Date(b.pendingUntil || b.orderDate);
-      }
-      return new Date(stampFor(b, tab)) - new Date(stampFor(a, tab));
+  const pinOf = (o) => normalisePin(o.pincode) || 'unknown';
+
+  const inThisTab = useMemo(
+    () => orders.filter((o) => inTab(o, tab) && inRange(o, tab)),
+    [orders, tab, range]
+  );
+
+  /**
+   * Every pincode in this tab with its order count, laid out the way the
+   * rider should ride it: the busiest pincode leads, then whichever pincode
+   * is nearest to it on the map, and so on down the list. A refresh that
+   * brings new orders in re-runs this, so the run stays sensible all day.
+   */
+  const pinStats = useMemo(() => {
+    const count = new Map();
+    inThisTab.forEach((o) => {
+      const p = pinOf(o);
+      count.set(p, (count.get(p) || 0) + 1);
     });
+
+    const known = [...count.keys()].filter((p) => p !== 'unknown');
+    // busiest pincode starts the run; same count falls back to the lower number
+    const anchor = known.sort(
+      (a, b) => count.get(b) - count.get(a) || Number(a) - Number(b)
+    )[0];
+
+    const ordered = anchor ? routeOrder(known, anchor) : [];
+    if (count.has('unknown')) ordered.push('unknown');
+
+    return ordered.map((p) => ({ pin: p, count: count.get(p) }));
+  }, [inThisTab]);
+
+  // Drop a pincode filter the moment that area has nothing left in this tab
+  useEffect(() => {
+    if (pin && !pinStats.some((s) => s.pin === pin)) setPin('');
+  }, [pin, pinStats]);
+
+  const shown = useMemo(() => {
+    const rank = new Map(pinStats.map((s, i) => [s.pin, i]));
+
+    return inThisTab
+      .filter((o) => !pin || pinOf(o) === pin)
+      .sort((a, b) => {
+        // anything marked urgent comes first, whatever the tab
+        if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
+
+        // then keep each area together, in map order
+        const ra = rank.get(pinOf(a)) ?? Infinity;
+        const rb = rank.get(pinOf(b)) ?? Infinity;
+        if (ra !== rb) return ra - rb;
+
+        if (tab === 'rescheduled') {
+          return new Date(a.pendingUntil || a.orderDate) - new Date(b.pendingUntil || b.orderDate);
+        }
+        return new Date(stampFor(b, tab)) - new Date(stampFor(a, tab));
+      });
+  }, [inThisTab, pinStats, pin, tab]);
 
   return (
     <main className="min-h-dvh bg-white pb-10">
@@ -304,7 +354,10 @@ export default function DeliveryDashboard({ user }) {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                setTab(t.key);
+                setPin('');
+              }}
               className={`border-b-[3px] px-1 py-2.5 text-center ${
                 tab === t.key
                   ? 'border-brand-200 text-white'
@@ -318,6 +371,17 @@ export default function DeliveryDashboard({ user }) {
         </div>
       </header>
 
+      {!loading && (
+        <div className="px-3 pt-3">
+          <PincodeFilter
+            stats={pinStats}
+            value={pin}
+            onChange={setPin}
+            tone={TAB_TONE[tab]}
+          />
+        </div>
+      )}
+
       {!loading && shown.length > 0 && (
         <div className="px-3 pt-3">
           <ProductSummary orders={shown} tone={TAB_TONE[tab]} />
@@ -329,6 +393,7 @@ export default function DeliveryDashboard({ user }) {
           onClick={() => {
             setNewCount(0);
             setTab('todo');
+            setPin('');
             setRange({ from: '', to: '' });
           }}
           className="btn btn-light sticky top-[150px] z-20 mx-3 mt-3 w-[calc(100%-1.5rem)] py-3 shadow-lg"
@@ -343,18 +408,27 @@ export default function DeliveryDashboard({ user }) {
         {!loading && shown.length === 0 && (
           <div className="py-16 text-center">
             <p className="text-ink-500">
-              {tab === 'todo'
-                ? 'Nothing assigned to you here.'
-                : `No ${TABS.find((t) => t.key === tab).label.toLowerCase()} orders here.`}
+              {pin
+                ? `Nothing left in ${pin === 'unknown' ? 'orders without a pincode' : pin}.`
+                : tab === 'todo'
+                  ? 'Nothing assigned to you here.'
+                  : `No ${TABS.find((t) => t.key === tab).label.toLowerCase()} orders here.`}
             </p>
-            {(range.from || range.to) && (
-              <button
-                onClick={() => setRange({ from: '', to: '' })}
-                className="btn btn-ghost mt-3 px-4 py-2 text-sm"
-              >
-                Show all dates
-              </button>
-            )}
+            <div className="mt-3 flex justify-center gap-2">
+              {pin && (
+                <button onClick={() => setPin('')} className="btn btn-ghost px-4 py-2 text-sm">
+                  Show all areas
+                </button>
+              )}
+              {(range.from || range.to) && (
+                <button
+                  onClick={() => setRange({ from: '', to: '' })}
+                  className="btn btn-ghost px-4 py-2 text-sm"
+                >
+                  Show all dates
+                </button>
+              )}
+            </div>
           </div>
         )}
 
