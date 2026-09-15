@@ -10,8 +10,10 @@ import {
   telHref,
   prettyPhone,
 } from '@/lib/constants';
-import { areaFor } from '@/lib/pincodes';
+import { areaFor, pinOf, pincodeStats } from '@/lib/pincodes';
+import { orderHasProduct } from '@/lib/products';
 import PincodeBadge from '@/components/PincodeBadge';
+import PincodeFilter from '@/components/PincodeFilter';
 import DateRange from '@/components/DateRange';
 import ProductSummary from '@/components/ProductSummary';
 import { VoiceRecorder } from '@/components/VoiceNote';
@@ -80,6 +82,8 @@ export default function AdminDashboard({ user }) {
   const [range, setRange] = useState({ from: '', to: '' });
   const [typedQ, setTypedQ] = useState('');
   const [q, setQ] = useState('');
+  const [pin, setPin] = useState('');
+  const [item, setItem] = useState('');
 
   const menuRef = useRef(null);
   const onRider = who !== 'unassigned';
@@ -271,6 +275,38 @@ export default function AdminDashboard({ user }) {
     next.has(id) ? next.delete(id) : next.add(id);
     setPicked(next);
   };
+
+  // Any change of rider, status, date or search re-slices the data, so the
+  // area and item filters start fresh rather than silently hiding rows.
+  useEffect(() => {
+    setPin('');
+    setItem('');
+  }, [orderQuery]);
+
+  // Same run order the riders see, so admin and rider read one list
+  const pinStats = useMemo(() => pincodeStats(orders), [orders]);
+
+  const afterPin = useMemo(
+    () => orders.filter((o) => !pin || pinOf(o) === pin),
+    [orders, pin]
+  );
+
+  const visible = useMemo(
+    () => afterPin.filter((o) => !item || orderHasProduct(o, item)),
+    [afterPin, item]
+  );
+
+  // A hidden row must never stay in a bulk assign
+  useEffect(() => {
+    setPicked((cur) => {
+      if (cur.size === 0) return cur;
+      const live = new Set(visible.map((o) => o.id));
+      const next = new Set([...cur].filter((id) => live.has(id)));
+      return next.size === cur.size ? cur : next;
+    });
+  }, [visible]);
+
+  const narrowed = visible.length !== orders.length;
 
   const listTitle = onRider
     ? statusPick === null || statusPick === 'out_for_delivery'
@@ -554,16 +590,42 @@ export default function AdminDashboard({ user }) {
             )}
 
             {orders.length > 0 && (
-              <ProductSummary
-                orders={orders}
-                tone={TONE_FOR[statusPick] || 'blue'}
-              />
+              <section className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:items-start">
+                <PincodeFilter
+                  stats={pinStats}
+                  value={pin}
+                  onChange={(p) => {
+                    setPin(p);
+                    setItem('');
+                  }}
+                  tone={TONE_FOR[statusPick] || 'blue'}
+                />
+                <ProductSummary
+                  orders={afterPin}
+                  tone={TONE_FOR[statusPick] || 'blue'}
+                  value={item}
+                  onChange={setItem}
+                />
+              </section>
             )}
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-semibold text-black">{listTitle}</h2>
-              <span className="text-sm text-ink-500 tabular-nums">{orders.length}</span>
+              <span className="text-sm text-ink-500 tabular-nums">
+                {narrowed ? `${visible.length} of ${orders.length}` : orders.length}
+              </span>
               {loading && <span className="pk-spinner text-ink-400" />}
+              {narrowed && (
+                <button
+                  onClick={() => {
+                    setPin('');
+                    setItem('');
+                  }}
+                  className="btn btn-ghost px-3 py-1.5 text-xs"
+                >
+                  Clear area / item
+                </button>
+              )}
             </div>
 
             {picked.size > 0 && (
@@ -596,12 +658,14 @@ export default function AdminDashboard({ user }) {
               </div>
             )}
 
-            {!loading && orders.length === 0 && (
-              <p className="py-14 text-center text-ink-500">Nothing here right now.</p>
+            {!loading && visible.length === 0 && (
+              <p className="py-14 text-center text-ink-500">
+                {narrowed ? 'Nothing matches that area or item.' : 'Nothing here right now.'}
+              </p>
             )}
 
             <div className="space-y-3 md:hidden">
-              {orders.map((o) => (
+              {visible.map((o) => (
                 <AdminOrderCard
                   key={o.id}
                   order={o}
@@ -617,7 +681,7 @@ export default function AdminDashboard({ user }) {
               ))}
             </div>
 
-            {orders.length > 0 && (
+            {visible.length > 0 && (
               <section className="hidden overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-sm md:block">
                 <table className="w-full min-w-[1250px] text-sm">
                   <thead className="border-b border-ink-100 bg-ink-50 text-left text-ink-500">
@@ -625,10 +689,10 @@ export default function AdminDashboard({ user }) {
                       <th className="w-10 px-3 py-2.5">
                         <input
                           type="checkbox"
-                          checked={orders.length > 0 && picked.size === orders.length}
+                          checked={visible.length > 0 && picked.size === visible.length}
                           onChange={(e) =>
                             setPicked(
-                              e.target.checked ? new Set(orders.map((o) => o.id)) : new Set()
+                              e.target.checked ? new Set(visible.map((o) => o.id)) : new Set()
                             )
                           }
                           className="size-4"
@@ -645,7 +709,7 @@ export default function AdminDashboard({ user }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink-100">
-                    {orders.map((o) => {
+                    {visible.map((o) => {
                       const un = !o.assignedToId;
                       const done = o.status === 'delivered' || o.status === 'cancelled';
                       return (

@@ -12,7 +12,8 @@ import {
   plainPhone,
   isoDay,
 } from '@/lib/constants';
-import { normalisePin, routeOrder } from '@/lib/pincodes';
+import { pinOf, pincodeStats } from '@/lib/pincodes';
+import { orderHasProduct } from '@/lib/products';
 import PincodeBadge from '@/components/PincodeBadge';
 import PincodeFilter from '@/components/PincodeFilter';
 import DateRange from '@/components/DateRange';
@@ -55,6 +56,7 @@ export default function DeliveryDashboard({ user }) {
   const [riders, setRiders] = useState([]);
   const [tab, setTab] = useState('todo');
   const [pin, setPin] = useState('');
+  const [item, setItem] = useState('');
   const [range, setRange] = useState({ from: '', to: '' });
   const [loading, setLoading] = useState(true);
   const [sheet, setSheet] = useState(null);
@@ -269,48 +271,32 @@ export default function DeliveryDashboard({ user }) {
     }
   }, [tab, newCount]);
 
-  const pinOf = (o) => normalisePin(o.pincode) || 'unknown';
-
   const inThisTab = useMemo(
     () => orders.filter((o) => inTab(o, tab) && inRange(o, tab)),
     [orders, tab, range]
   );
 
-  /**
-   * Every pincode in this tab with its order count, laid out the way the
-   * rider should ride it: the busiest pincode leads, then whichever pincode
-   * is nearest to it on the map, and so on down the list. A refresh that
-   * brings new orders in re-runs this, so the run stays sensible all day.
-   */
-  const pinStats = useMemo(() => {
-    const count = new Map();
-    inThisTab.forEach((o) => {
-      const p = pinOf(o);
-      count.set(p, (count.get(p) || 0) + 1);
-    });
-
-    const known = [...count.keys()].filter((p) => p !== 'unknown');
-    // busiest pincode starts the run; same count falls back to the lower number
-    const anchor = known.sort(
-      (a, b) => count.get(b) - count.get(a) || Number(a) - Number(b)
-    )[0];
-
-    const ordered = anchor ? routeOrder(known, anchor) : [];
-    if (count.has('unknown')) ordered.push('unknown');
-
-    return ordered.map((p) => ({ pin: p, count: count.get(p) }));
-  }, [inThisTab]);
+  // Laid out the way the rider should ride it - busiest area first, then
+  // whichever is nearest. A refresh re-runs it, so the run stays sensible.
+  const pinStats = useMemo(() => pincodeStats(inThisTab), [inThisTab]);
 
   // Drop a pincode filter the moment that area has nothing left in this tab
   useEffect(() => {
     if (pin && !pinStats.some((s) => s.pin === pin)) setPin('');
   }, [pin, pinStats]);
 
+  // The item chips describe the chosen area, so a rider can pick an area and
+  // then an item within it, and still switch items without losing the area.
+  const inThisArea = useMemo(
+    () => inThisTab.filter((o) => !pin || pinOf(o) === pin),
+    [inThisTab, pin]
+  );
+
   const shown = useMemo(() => {
     const rank = new Map(pinStats.map((s, i) => [s.pin, i]));
 
-    return inThisTab
-      .filter((o) => !pin || pinOf(o) === pin)
+    return inThisArea
+      .filter((o) => !item || orderHasProduct(o, item))
       .sort((a, b) => {
         // anything marked urgent comes first, whatever the tab
         if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
@@ -325,7 +311,7 @@ export default function DeliveryDashboard({ user }) {
         }
         return new Date(stampFor(b, tab)) - new Date(stampFor(a, tab));
       });
-  }, [inThisTab, pinStats, pin, tab]);
+  }, [inThisArea, pinStats, item, tab]);
 
   return (
     <main className="min-h-dvh bg-white pb-10">
@@ -357,6 +343,7 @@ export default function DeliveryDashboard({ user }) {
               onClick={() => {
                 setTab(t.key);
                 setPin('');
+                setItem('');
               }}
               className={`border-b-[3px] px-1 py-2.5 text-center ${
                 tab === t.key
@@ -372,19 +359,22 @@ export default function DeliveryDashboard({ user }) {
       </header>
 
       {!loading && (
-        <div className="px-3 pt-3">
+        <div className="space-y-3 px-3 pt-3">
           <PincodeFilter
             stats={pinStats}
             value={pin}
-            onChange={setPin}
+            onChange={(p) => {
+              setPin(p);
+              setItem('');
+            }}
             tone={TAB_TONE[tab]}
           />
-        </div>
-      )}
-
-      {!loading && shown.length > 0 && (
-        <div className="px-3 pt-3">
-          <ProductSummary orders={shown} tone={TAB_TONE[tab]} />
+          <ProductSummary
+            orders={inThisArea}
+            tone={TAB_TONE[tab]}
+            value={item}
+            onChange={setItem}
+          />
         </div>
       )}
 
@@ -394,6 +384,7 @@ export default function DeliveryDashboard({ user }) {
             setNewCount(0);
             setTab('todo');
             setPin('');
+            setItem('');
             setRange({ from: '', to: '' });
           }}
           className="btn btn-light sticky top-[150px] z-20 mx-3 mt-3 w-[calc(100%-1.5rem)] py-3 shadow-lg"
@@ -408,13 +399,20 @@ export default function DeliveryDashboard({ user }) {
         {!loading && shown.length === 0 && (
           <div className="py-16 text-center">
             <p className="text-ink-500">
-              {pin
-                ? `Nothing left in ${pin === 'unknown' ? 'orders without a pincode' : pin}.`
-                : tab === 'todo'
-                  ? 'Nothing assigned to you here.'
-                  : `No ${TABS.find((t) => t.key === tab).label.toLowerCase()} orders here.`}
+              {item
+                ? 'No orders with that item here.'
+                : pin
+                  ? `Nothing left in ${pin === 'unknown' ? 'orders without a pincode' : pin}.`
+                  : tab === 'todo'
+                    ? 'Nothing assigned to you here.'
+                    : `No ${TABS.find((t) => t.key === tab).label.toLowerCase()} orders here.`}
             </p>
-            <div className="mt-3 flex justify-center gap-2">
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
+              {item && (
+                <button onClick={() => setItem('')} className="btn btn-ghost px-4 py-2 text-sm">
+                  Show all items
+                </button>
+              )}
               {pin && (
                 <button onClick={() => setPin('')} className="btn btn-ghost px-4 py-2 text-sm">
                   Show all areas

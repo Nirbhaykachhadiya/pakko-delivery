@@ -1,5 +1,7 @@
 'use client';
 
+import { productTotals, shortName } from '@/lib/products';
+
 const TONES = {
   blue: {
     wrap: 'bg-brand-50 ring-brand-200',
@@ -23,51 +25,80 @@ const TONES = {
   },
 };
 
-// "Bullet Massager with 9 Heads" -> "Bullet Mas"
-function shortName(name, len = 10) {
-  const clean = String(name || '').trim();
-  return clean.length <= len ? clean : clean.slice(0, len).trim();
-}
-
 /**
- * Totals up every product across the orders currently on screen, so the
- * rider knows exactly how many units to pick up before leaving, and the
- * admin can see the same at a glance. Counts units, not orders - three of
- * one item in a single order counts as three.
+ * Totals up every product across the orders on screen, so the rider knows what
+ * to pick up before leaving and the admin sees the same at a glance. Counts
+ * units, not orders - three of one item in a single order counts as three.
+ *
+ * Pass `value` and `onChange` to make the chips a filter: tapping one narrows
+ * the list to the orders carrying that item, tapping it again clears it.
  */
-export default function ProductSummary({ orders, tone = 'blue' }) {
+export default function ProductSummary({ orders, tone = 'blue', value, onChange }) {
   const t = TONES[tone] || TONES.blue;
+  const rows = productTotals(orders);
 
-  const totals = new Map();
-  for (const o of orders || []) {
-    for (const p of o.products || []) {
-      const key = String(p.name || '').trim();
-      if (!key) continue;
-      totals.set(key, (totals.get(key) || 0) + (Number(p.qty) || 0));
-    }
-  }
+  if (rows.length === 0) return null;
 
-  if (totals.size === 0) return null;
-
-  const rows = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-  const grand = rows.reduce((sum, [, qty]) => sum + qty, 0);
+  const grand = rows.reduce((sum, r) => sum + r.qty, 0);
+  const pickable = typeof onChange === 'function';
+  const picked = pickable ? rows.find((r) => r.key === value) : null;
 
   return (
     <div className={`rounded-xl px-3 py-2.5 ring-1 ${t.wrap}`}>
-      <div className={`text-[11px] font-semibold uppercase tracking-wide ${t.label}`}>
-        Items to carry · {grand} total
-      </div>
-      <div className="mt-1.5 flex flex-wrap gap-2">
-        {rows.map(([name, qty]) => (
-          <span
-            key={name}
-            title={name}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-bold ${t.chip}`}
+      <div className={`flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide ${t.label}`}>
+        <span>Items to carry · {grand} total</span>
+        {picked && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="ml-auto rounded-md bg-white/70 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal underline"
           >
-            {shortName(name)}
-            <span className="tabular-nums opacity-90">({qty})</span>
-          </span>
-        ))}
+            Clear
+          </button>
+        )}
+      </div>
+
+      {pickable && (
+        <p className={`mt-1 text-[11px] font-medium ${t.label} opacity-80`}>
+          {picked
+            ? `Showing the ${picked.orders} ${picked.orders === 1 ? 'order' : 'orders'} with ${picked.name}`
+            : 'Tap an item to see just those orders'}
+        </p>
+      )}
+
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {rows.map((r) => {
+          const on = picked?.key === r.key;
+          const dim = picked && !on;
+
+          if (!pickable) {
+            return (
+              <span
+                key={r.key}
+                title={r.name}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-bold ${t.chip}`}
+              >
+                {shortName(r.name)}
+                <span className="tabular-nums opacity-90">({r.qty})</span>
+              </span>
+            );
+          }
+
+          return (
+            <button
+              key={r.key}
+              type="button"
+              title={`${r.name} · ${r.qty} units across ${r.orders} orders`}
+              onClick={() => onChange(on ? '' : r.key)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-bold transition-opacity ${
+                t.chip
+              } ${on ? 'ring-2 ring-black/40' : dim ? 'opacity-45' : ''}`}
+            >
+              {shortName(r.name)}
+              <span className="tabular-nums opacity-90">({r.qty})</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

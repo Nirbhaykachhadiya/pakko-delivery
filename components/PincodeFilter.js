@@ -1,111 +1,143 @@
 'use client';
 
 import { useState } from 'react';
-import { areaFor } from '@/lib/pincodes';
+import { areaFor, NO_PIN } from '@/lib/pincodes';
 
-const TONE = {
-  blue: { on: 'bg-brand-600 text-white', ring: 'ring-brand-200' },
-  yellow: { on: 'bg-warn-500 text-warn-900', ring: 'ring-warn-500' },
-  green: { on: 'bg-good-500 text-white', ring: 'ring-good-500' },
-  red: { on: 'bg-stop-500 text-white', ring: 'ring-stop-500' },
+// Note: no `.btn` class anywhere below. `.btn` is unlayered CSS, so it beats
+// Tailwind's layered utilities and force-centres every row. Plain flex here.
+const TONES = {
+  blue: { solid: 'bg-brand-600 text-white', soft: 'bg-brand-50 text-brand-800' },
+  yellow: { solid: 'bg-warn-500 text-warn-900', soft: 'bg-warn-50 text-warn-900' },
+  green: { solid: 'bg-good-500 text-white', soft: 'bg-good-50 text-good-900' },
+  red: { solid: 'bg-stop-500 text-white', soft: 'bg-stop-50 text-stop-900' },
 };
 
+const labelFor = (pin) =>
+  pin === NO_PIN ? 'No pincode' : areaFor(pin) || 'Add area name';
+
 /**
- * The pincode picker that sits under every tab.
+ * The pincode picker under every tab.
  *
- * `stats` arrives already in delivery order - the pincode with the most orders
- * first, then its nearest neighbour, and so on - so the rider reads the list
- * top to bottom the same way they would ride it. Tapping one narrows the tab
- * to that area; tapping "All areas" puts everything back.
+ * `stats` arrives already in delivery order - busiest pincode first, then its
+ * nearest neighbour - so the rider reads it the same way they ride it.
+ * Tapping one narrows the list to that area; "All areas" puts it back.
  */
 export default function PincodeFilter({ stats, value, onChange, tone = 'blue' }) {
   const [open, setOpen] = useState(false);
-  const t = TONE[tone] || TONE.blue;
+  const t = TONES[tone] || TONES.blue;
 
-  if (stats.length < 2) return null;
+  if (!stats || stats.length < 2) return null;
 
   const total = stats.reduce((n, s) => n + s.count, 0);
   const picked = stats.find((s) => s.pin === value);
-
-  const label = picked
-    ? `${picked.pin === 'unknown' ? 'No pincode' : picked.pin}${
-        areaFor(picked.pin) ? ` · ${areaFor(picked.pin)}` : ''
-      }`
-    : `All areas · ${stats.length} pincodes`;
 
   const choose = (pin) => {
     onChange(pin);
     setOpen(false);
   };
 
-  return (
-    <div className="space-y-2">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={`btn w-full justify-between px-3.5 py-2.5 text-sm ring-1 ${
-          picked ? t.on : `bg-white text-ink-700 ring-ink-200 ${t.ring}`
+  const Row = ({ rank, title, sub, count, on, onClick }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors ${
+        on ? t.solid : 'bg-white text-ink-700 active:bg-ink-50'
+      }`}
+    >
+      {rank != null && (
+        <span
+          className={`w-5 shrink-0 text-right text-[11px] font-semibold tabular-nums ${
+            on ? 'opacity-70' : 'text-ink-400'
+          }`}
+        >
+          {rank}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-mono text-[15px] font-bold leading-tight tabular-nums">
+          {title}
+        </span>
+        <span
+          className={`block truncate text-xs font-medium leading-tight ${
+            on ? 'opacity-80' : 'text-ink-500'
+          }`}
+        >
+          {sub}
+        </span>
+      </span>
+      <span
+        className={`shrink-0 rounded-lg px-2 py-0.5 text-sm font-bold tabular-nums ${
+          on ? 'bg-black/15' : 'bg-ink-100 text-ink-700'
         }`}
       >
-        <span className="min-w-0 truncate font-semibold">{label}</span>
-        <span className="flex shrink-0 items-center gap-2">
-          <span className="rounded-md bg-black/10 px-2 py-0.5 font-bold tabular-nums">
-            {picked ? picked.count : total}
+        {count}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left ring-1 ${
+          picked ? `${t.solid} ring-transparent` : 'bg-white text-ink-700 ring-ink-200'
+        }`}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-bold leading-tight">
+            {picked
+              ? picked.pin === NO_PIN
+                ? 'No pincode'
+                : picked.pin
+              : 'All areas'}
           </span>
-          <span aria-hidden className="text-xs">
-            {open ? '▲' : '▼'}
+          <span
+            className={`block truncate text-xs font-medium leading-tight ${
+              picked ? 'opacity-80' : 'text-ink-500'
+            }`}
+          >
+            {picked ? labelFor(picked.pin) : `${stats.length} pincodes · tap to pick`}
           </span>
+        </span>
+        <span
+          className={`shrink-0 rounded-lg px-2 py-0.5 text-sm font-bold tabular-nums ${
+            picked ? 'bg-black/15' : 'bg-ink-100 text-ink-700'
+          }`}
+        >
+          {picked ? picked.count : total}
+        </span>
+        <span aria-hidden className={`shrink-0 text-[10px] ${picked ? '' : 'text-ink-400'}`}>
+          {open ? '▲' : '▼'}
         </span>
       </button>
 
       {open && (
-        <div className="max-h-72 overflow-y-auto rounded-xl bg-white p-1.5 ring-1 ring-ink-200">
-          <button
-            onClick={() => choose('')}
-            className={`btn w-full justify-between px-3 py-2.5 text-sm ${
-              !picked ? t.on : 'bg-ink-50 text-ink-700'
-            }`}
-          >
-            <span className="font-semibold">All areas</span>
-            <span className="font-bold tabular-nums">{total}</span>
-          </button>
-
-          {stats.map((s, i) => {
-            const on = s.pin === value;
-            const area = areaFor(s.pin);
-            return (
-              <button
+        <>
+          {/* tap anywhere else to close, without stealing the first tap */}
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute inset-x-0 top-full z-40 mt-1.5 max-h-[60vh] overflow-y-auto rounded-xl border border-ink-200 bg-white p-1.5 shadow-xl">
+            <Row
+              title="All areas"
+              sub={`${stats.length} pincodes`}
+              count={total}
+              on={!picked}
+              onClick={() => choose('')}
+            />
+            <div className="my-1 border-t border-ink-100" />
+            {stats.map((s, i) => (
+              <Row
                 key={s.pin}
+                rank={i + 1}
+                title={s.pin === NO_PIN ? '—' : s.pin}
+                sub={labelFor(s.pin)}
+                count={s.count}
+                on={s.pin === value}
                 onClick={() => choose(s.pin)}
-                className={`btn mt-1 w-full justify-between px-3 py-2.5 text-sm ${
-                  on ? t.on : 'bg-white text-ink-700'
-                }`}
-              >
-                <span className="flex min-w-0 items-center gap-2.5">
-                  <span
-                    className={`w-5 shrink-0 text-right text-[11px] tabular-nums ${
-                      on ? 'opacity-70' : 'text-ink-400'
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                  <span className="min-w-0 text-left">
-                    <span className="block font-mono font-bold tabular-nums">
-                      {s.pin === 'unknown' ? '—' : s.pin}
-                    </span>
-                    <span
-                      className={`block truncate text-xs font-medium ${
-                        on ? 'opacity-80' : 'text-ink-500'
-                      }`}
-                    >
-                      {s.pin === 'unknown' ? 'No pincode' : area || 'Add area name'}
-                    </span>
-                  </span>
-                </span>
-                <span className="shrink-0 font-bold tabular-nums">{s.count}</span>
-              </button>
-            );
-          })}
-        </div>
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
