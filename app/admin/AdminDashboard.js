@@ -68,7 +68,7 @@ export default function AdminDashboard({ user }) {
   const [riders, setRiders] = useState([]);
   const [team, setTeam] = useState([]);
   const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loadedKey, setLoadedKey] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState('');
   const [picked, setPicked] = useState(new Set());
@@ -130,9 +130,14 @@ export default function AdminDashboard({ user }) {
     return p.toString();
   }, [range, onRider, who]);
 
+  // What is on screen was fetched for this exact query. Comparing it to the
+  // query being asked for now tells us we are loading, without an effect
+  // having to set a flag - so the spinner shows the moment a filter changes.
+  const dataKey = `${orderQuery}|${statsQuery}`;
+  const loading = loadedKey !== dataKey;
+
   const load = useCallback(
     async (quiet = false) => {
-      if (!quiet) setLoading(true);
       const [o, s, u] = await Promise.all([
         safeJson(`/api/orders?${orderQuery}`),
         safeJson(`/api/stats?${statsQuery}`),
@@ -145,12 +150,16 @@ export default function AdminDashboard({ user }) {
       setRiders(u.riders || []);
       setTeam(u.all || []);
       if (!quiet) setPicked(new Set());
-      setLoading(false);
+      setLoadedKey(`${orderQuery}|${statsQuery}`);
     },
     [orderQuery, statsQuery]
   );
 
+  // Refetches whenever the rider, status, date or search changes, since those
+  // rebuild `load`. It awaits before it sets anything, so nothing here
+  // cascades a render - the rule just cannot see that through the await.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
@@ -1497,7 +1506,7 @@ function UrgentForm({ order, onSave, onClose }) {
       </p>
 
       <div className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-900">
-        This jumps to the top of the rider's list with a red banner.
+        This jumps to the top of the rider&apos;s list with a red banner.
       </div>
 
       <label className="block">

@@ -34,6 +34,19 @@ const TABS = [
   { key: 'cancelled', label: 'Cancelled', status: 'cancelled' },
 ];
 
+// Which date a tab actually cares about - a delivered card is filed under the
+// day it was delivered, not the day the order came in.
+const stampFor = (o, key) =>
+  key === 'delivered'
+    ? o.deliveredAt
+    : key === 'cancelled'
+      ? o.cancelledAt
+      : key === 'rescheduled'
+        ? o.lastAttemptAt
+        : o.orderDate;
+
+const inTab = (o, key) => o.status === TABS.find((t) => t.key === key).status;
+
 // A failed route can return an empty body, so never call .json() blindly
 async function safeJson(url, init) {
   try {
@@ -70,7 +83,6 @@ export default function DeliveryDashboard({ user }) {
 
   const load = useCallback(
     async (quiet = false) => {
-      if (!quiet) setLoading(true);
       const [o, u] = await Promise.all([
         safeJson('/api/orders'),
         safeJson('/api/users'),
@@ -99,7 +111,9 @@ export default function DeliveryDashboard({ user }) {
 
       setOrders(list);
       setRiders((u.riders || []).filter((r) => r.id !== user.id));
-      if (!quiet) setLoading(false);
+      // The screen opens on "Loading…" and only ever needs turning off, so
+      // this stays out of the effect body where it would cascade a render.
+      setLoading(false);
     },
     [user.id]
   );
@@ -125,7 +139,11 @@ export default function DeliveryDashboard({ user }) {
     }
   }, [load]);
 
+  // The first list has to come from somewhere. `load` awaits before it sets
+  // anything, so nothing here cascades a render - the rule just cannot see
+  // that through the await. Everything after this arrives via polling.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
@@ -237,24 +255,16 @@ export default function DeliveryDashboard({ user }) {
     router.refresh();
   }
 
-  const stampFor = (o, key) =>
-    key === 'delivered'
-      ? o.deliveredAt
-      : key === 'cancelled'
-        ? o.cancelledAt
-        : key === 'rescheduled'
-          ? o.lastAttemptAt
-          : o.orderDate;
-
-  const inRange = (o, key) => {
-    if (!range.from && !range.to) return true;
-    const day = isoDay(stampFor(o, key));
-    const from = range.from || '0000-00-00';
-    const to = range.to || range.from;
-    return day >= from && day <= to;
-  };
-
-  const inTab = (o, key) => o.status === TABS.find((t) => t.key === key).status;
+  const inRange = useCallback(
+    (o, key) => {
+      if (!range.from && !range.to) return true;
+      const day = isoDay(stampFor(o, key));
+      const from = range.from || '0000-00-00';
+      const to = range.to || range.from;
+      return day >= from && day <= to;
+    },
+    [range]
+  );
 
   const counts = useMemo(() => {
     const c = {};
@@ -262,7 +272,7 @@ export default function DeliveryDashboard({ user }) {
       c[t.key] = orders.filter((o) => inTab(o, t.key) && inRange(o, t.key)).length;
     });
     return c;
-  }, [orders, range]);
+  }, [orders, inRange]);
 
   useEffect(() => {
     if (tab === 'todo' && newCount > 0) {
@@ -273,7 +283,7 @@ export default function DeliveryDashboard({ user }) {
 
   const inThisTab = useMemo(
     () => orders.filter((o) => inTab(o, tab) && inRange(o, tab)),
-    [orders, tab, range]
+    [orders, tab, inRange]
   );
 
   // Laid out the way the rider should ride it - busiest area first, then
